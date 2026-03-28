@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ISSUE_PRIORITIES, ISSUE_STATUSES } from "../constants.js";
+import { ISSUE_COMMENT_WORKFLOW_ACTIONS, ISSUE_PRIORITIES, ISSUE_STATUSES } from "../constants.js";
 
 const executionWorkspaceStrategySchema = z
   .object({
@@ -79,10 +79,13 @@ export const checkoutIssueSchema = z.object({
 
 export type CheckoutIssue = z.infer<typeof checkoutIssueSchema>;
 
+export const issueCommentWorkflowActionSchema = z.enum(ISSUE_COMMENT_WORKFLOW_ACTIONS);
+
 export const addIssueCommentSchema = z.object({
   body: z.string().min(1),
   reopen: z.boolean().optional(),
   interrupt: z.boolean().optional(),
+  workflowAction: issueCommentWorkflowActionSchema.optional(),
 });
 
 export type AddIssueComment = z.infer<typeof addIssueCommentSchema>;

@@ -1,7 +1,8 @@
 import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
-import type { IssueComment, Agent } from "@paperclipai/shared";
+import type { Agent, IssueComment, IssueCommentWorkflowAction } from "@paperclipai/shared";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Check, Copy, Paperclip } from "lucide-react";
 import { Identity } from "./Identity";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
@@ -30,12 +31,43 @@ interface CommentReassignment {
   assigneeUserId: string | null;
 }
 
+type CommentActionMode = "comment" | IssueCommentWorkflowAction;
+
+const COMMENT_ACTION_OPTIONS: Array<{ value: CommentActionMode; label: string }> = [
+  { value: "comment", label: "Comment" },
+  { value: "continue", label: "Continue" },
+  { value: "request_review", label: "Request review" },
+  { value: "changes_requested", label: "Request changes" },
+  { value: "approve", label: "Approve" },
+];
+
+const COMMENT_ACTION_BUTTON_LABELS: Record<CommentActionMode, string> = {
+  comment: "Comment",
+  continue: "Continue",
+  request_review: "Request review",
+  changes_requested: "Request changes",
+  approve: "Approve",
+};
+
+function isClosedIssueStatus(status?: string) {
+  return status === "done" || status === "cancelled";
+}
+
+function defaultCommentActionMode(status?: string): CommentActionMode {
+  return isClosedIssueStatus(status) ? "continue" : "comment";
+}
+
 interface CommentThreadProps {
   comments: CommentWithRunMeta[];
   linkedRuns?: LinkedRunItem[];
   companyId?: string | null;
   projectId?: string | null;
-  onAdd: (body: string, reopen?: boolean, reassignment?: CommentReassignment) => Promise<void>;
+  onAdd: (input: {
+    body: string;
+    reopen?: boolean;
+    reassignment?: CommentReassignment;
+    workflowAction?: IssueCommentWorkflowAction;
+  }) => Promise<void>;
   issueStatus?: string;
   agentMap?: Map<string, Agent>;
   imageUploadHandler?: (file: File) => Promise<string>;
@@ -260,6 +292,7 @@ export function CommentThread({
   companyId,
   projectId,
   onAdd,
+  issueStatus,
   agentMap,
   imageUploadHandler,
   onAttachImage,
@@ -271,8 +304,10 @@ export function CommentThread({
   suggestedAssigneeValue,
   mentions: providedMentions,
 }: CommentThreadProps) {
+  const defaultActionMode = useMemo(() => defaultCommentActionMode(issueStatus), [issueStatus]);
   const [body, setBody] = useState("");
   const [reopen, setReopen] = useState(true);
+  const [actionMode, setActionMode] = useState<CommentActionMode>(defaultActionMode);
   const [submitting, setSubmitting] = useState(false);
   const [attaching, setAttaching] = useState(false);
   const effectiveSuggestedAssigneeValue = suggestedAssigneeValue ?? currentAssigneeValue;
@@ -342,6 +377,10 @@ export function CommentThread({
     setReassignTarget(effectiveSuggestedAssigneeValue);
   }, [effectiveSuggestedAssigneeValue]);
 
+  useEffect(() => {
+    setActionMode(defaultActionMode);
+  }, [defaultActionMode]);
+
   // Scroll to comment when URL hash matches #comment-{id}
   useEffect(() => {
     const hash = location.hash;
@@ -365,13 +404,20 @@ export function CommentThread({
     if (!trimmed) return;
     const hasReassignment = enableReassign && reassignTarget !== currentAssigneeValue;
     const reassignment = hasReassignment ? parseReassignment(reassignTarget) : null;
+    const showReopenToggle = isClosedIssueStatus(issueStatus) && (actionMode === "comment" || actionMode === "continue");
 
     setSubmitting(true);
     try {
-      await onAdd(trimmed, reopen ? true : undefined, reassignment ?? undefined);
+      await onAdd({
+        body: trimmed,
+        reopen: showReopenToggle && reopen ? true : undefined,
+        reassignment: reassignment ?? undefined,
+        workflowAction: actionMode === "comment" ? undefined : actionMode,
+      });
       setBody("");
       if (draftKey) clearDraft(draftKey);
       setReopen(true);
+      setActionMode(defaultActionMode);
       setReassignTarget(effectiveSuggestedAssigneeValue);
     } finally {
       setSubmitting(false);
@@ -398,6 +444,7 @@ export function CommentThread({
   }
 
   const canSubmit = !submitting && !!body.trim();
+  const showReopenToggle = isClosedIssueStatus(issueStatus) && (actionMode === "comment" || actionMode === "continue");
 
   return (
     <div className="space-y-4">
@@ -445,15 +492,29 @@ export function CommentThread({
               </Button>
             </div>
           )}
-          <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={reopen}
-              onChange={(e) => setReopen(e.target.checked)}
-              className="rounded border-border"
-            />
-            Re-open
-          </label>
+          <Select value={actionMode} onValueChange={(value) => setActionMode(value as CommentActionMode)}>
+            <SelectTrigger size="sm" className="h-8 min-w-[150px] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {COMMENT_ACTION_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {showReopenToggle ? (
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={reopen}
+                onChange={(e) => setReopen(e.target.checked)}
+                className="rounded border-border"
+              />
+              Re-open
+            </label>
+          ) : null}
           {enableReassign && reassignOptions.length > 0 && (
             <InlineEntitySelector
               value={reassignTarget}
@@ -493,7 +554,7 @@ export function CommentThread({
             />
           )}
           <Button size="sm" disabled={!canSubmit} onClick={handleSubmit}>
-            {submitting ? "Posting..." : "Comment"}
+            {submitting ? "Posting..." : COMMENT_ACTION_BUTTON_LABELS[actionMode]}
           </Button>
         </div>
       </div>

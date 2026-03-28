@@ -122,6 +122,7 @@ export {
   updateIssueSchema,
   issueExecutionWorkspaceSettingsSchema,
   checkoutIssueSchema,
+  issueCommentWorkflowActionSchema,
   addIssueCommentSchema,
   linkIssueApprovalSchema,
   createIssueAttachmentMetadataSchema,

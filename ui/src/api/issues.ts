@@ -4,12 +4,19 @@ import type {
   Issue,
   IssueAttachment,
   IssueComment,
+  IssueCommentWorkflowAction,
   IssueDocument,
   IssueLabel,
   IssueWorkProduct,
   UpsertIssueDocument,
 } from "@paperclipai/shared";
 import { api } from "./client";
+
+export interface AddIssueCommentOptions {
+  reopen?: boolean;
+  interrupt?: boolean;
+  workflowAction?: IssueCommentWorkflowAction;
+}
 
 export const issuesApi = {
   list: (
@@ -68,13 +75,14 @@ export const issuesApi = {
     }),
   release: (id: string) => api.post<Issue>(`/issues/${id}/release`, {}),
   listComments: (id: string) => api.get<IssueComment[]>(`/issues/${id}/comments`),
-  addComment: (id: string, body: string, reopen?: boolean, interrupt?: boolean) =>
+  addComment: (id: string, body: string, options: AddIssueCommentOptions = {}) =>
     api.post<IssueComment>(
       `/issues/${id}/comments`,
       {
         body,
-        ...(reopen === undefined ? {} : { reopen }),
-        ...(interrupt === undefined ? {} : { interrupt }),
+        ...(options.reopen === undefined ? {} : { reopen: options.reopen }),
+        ...(options.interrupt === undefined ? {} : { interrupt: options.interrupt }),
+        ...(options.workflowAction === undefined ? {} : { workflowAction: options.workflowAction }),
       },
     ),
   listDocuments: (id: string) => api.get<IssueDocument[]>(`/issues/${id}/documents`),

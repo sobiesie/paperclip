@@ -13,6 +13,9 @@ import {
   updateIssueWorkProductSchema,
   upsertIssueDocumentSchema,
   updateIssueSchema,
+  type IssueCommentWorkflowAction,
+  type IssueStatus,
+  type IssueWorkProduct,
 } from "@paperclipai/shared";
 import type { StorageService } from "../storage/types.js";
 import { validate } from "../middleware/validate.js";
@@ -38,6 +41,73 @@ import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.
 import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
+const COMMENT_WORKFLOW_FALLBACK_TYPES = new Set<IssueWorkProduct["type"]>([
+  "pull_request",
+  "branch",
+  "commit",
+  "preview_url",
+  "document",
+]);
+
+function isClosedIssueStatus(status: string) {
+  return status === "done" || status === "cancelled";
+}
+
+function getCommentWorkflowIssueStatus(
+  workflowAction: IssueCommentWorkflowAction | undefined,
+  currentStatus: string,
+): IssueStatus | null {
+  switch (workflowAction) {
+    case "continue":
+      return currentStatus === "in_review" || isClosedIssueStatus(currentStatus) ? "todo" : null;
+    case "request_review":
+      return currentStatus === "in_review" ? null : "in_review";
+    case "changes_requested":
+      return currentStatus === "todo" ? null : "todo";
+    case "approve":
+      return currentStatus === "done" ? null : "done";
+    default:
+      return null;
+  }
+}
+
+function getCommentWorkflowWorkProductPatch(
+  workflowAction: IssueCommentWorkflowAction | undefined,
+): Pick<IssueWorkProduct, "status" | "reviewState"> | null {
+  switch (workflowAction) {
+    case "continue":
+      return { status: "active", reviewState: "none" };
+    case "request_review":
+      return { status: "ready_for_review", reviewState: "needs_board_review" };
+    case "changes_requested":
+      return { status: "changes_requested", reviewState: "changes_requested" };
+    case "approve":
+      return { status: "approved", reviewState: "approved" };
+    default:
+      return null;
+  }
+}
+
+function selectCommentWorkflowWorkProducts(workProducts: IssueWorkProduct[]) {
+  const primary = workProducts.filter(
+    (workProduct) => workProduct.isPrimary && COMMENT_WORKFLOW_FALLBACK_TYPES.has(workProduct.type),
+  );
+  if (primary.length > 0) return primary;
+  const anyPrimary = workProducts.filter((workProduct) => workProduct.isPrimary);
+  if (anyPrimary.length > 0) return anyPrimary;
+  return workProducts.filter((workProduct) => COMMENT_WORKFLOW_FALLBACK_TYPES.has(workProduct.type));
+}
+
+function getCommentWorkflowWakeReason(workflowAction: IssueCommentWorkflowAction | undefined) {
+  switch (workflowAction) {
+    case "continue":
+      return "issue_continue_requested";
+    case "changes_requested":
+      return "issue_changes_requested";
+    default:
+      return null;
+  }
+}
 
 export function issueRoutes(db: Db, storage: StorageService) {
   const router = Router();
@@ -1306,21 +1376,25 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const actor = getActorInfo(req);
     const reopenRequested = req.body.reopen === true;
     const interruptRequested = req.body.interrupt === true;
-    const isClosed = issue.status === "done" || issue.status === "cancelled";
+    const workflowAction = req.body.workflowAction;
+    const wasClosed = isClosedIssueStatus(issue.status);
+    const workflowStatus = getCommentWorkflowIssueStatus(workflowAction, issue.status);
+    const desiredStatus = workflowStatus ?? (reopenRequested && wasClosed ? "todo" : null);
     let reopened = false;
     let reopenFromStatus: string | null = null;
     let interruptedRunId: string | null = null;
+    const updatedWorkProductIds: string[] = [];
     let currentIssue = issue;
 
-    if (reopenRequested && isClosed) {
-      const reopenedIssue = await svc.update(id, { status: "todo" });
-      if (!reopenedIssue) {
+    if (desiredStatus && desiredStatus !== issue.status) {
+      const updatedIssue = await svc.update(id, { status: desiredStatus });
+      if (!updatedIssue) {
         res.status(404).json({ error: "Issue not found" });
         return;
       }
-      reopened = true;
-      reopenFromStatus = issue.status;
-      currentIssue = reopenedIssue;
+      reopened = reopenRequested && wasClosed && desiredStatus === "todo";
+      reopenFromStatus = reopened ? issue.status : null;
+      currentIssue = updatedIssue;
 
       await logActivity(db, {
         companyId: currentIssue.companyId,
@@ -1332,11 +1406,12 @@ export function issueRoutes(db: Db, storage: StorageService) {
         entityType: "issue",
         entityId: currentIssue.id,
         details: {
-          status: "todo",
-          reopened: true,
-          reopenedFrom: reopenFromStatus,
+          status: currentIssue.status,
+          workflowAction,
           source: "comment",
           identifier: currentIssue.identifier,
+          ...(reopened ? { reopened: true, reopenedFrom: reopenFromStatus } : {}),
+          _previous: { status: issue.status },
         },
       });
     }
@@ -1387,6 +1462,43 @@ export function issueRoutes(db: Db, storage: StorageService) {
       }
     }
 
+    const workflowWorkProductPatch = getCommentWorkflowWorkProductPatch(workflowAction);
+    if (workflowWorkProductPatch) {
+      const workflowProducts = selectCommentWorkflowWorkProducts(
+        await workProductsSvc.listForIssue(currentIssue.id),
+      );
+      for (const workProduct of workflowProducts) {
+        const patch: Partial<Pick<IssueWorkProduct, "status" | "reviewState">> = {};
+        if (workProduct.status !== workflowWorkProductPatch.status) {
+          patch.status = workflowWorkProductPatch.status;
+        }
+        if (workProduct.reviewState !== workflowWorkProductPatch.reviewState) {
+          patch.reviewState = workflowWorkProductPatch.reviewState;
+        }
+        if (Object.keys(patch).length === 0) continue;
+        const updatedProduct = await workProductsSvc.update(workProduct.id, patch);
+        if (!updatedProduct) continue;
+        updatedWorkProductIds.push(updatedProduct.id);
+
+        await logActivity(db, {
+          companyId: currentIssue.companyId,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          agentId: actor.agentId,
+          runId: actor.runId,
+          action: "issue.work_product_updated",
+          entityType: "issue",
+          entityId: currentIssue.id,
+          details: {
+            workProductId: updatedProduct.id,
+            changedKeys: Object.keys(patch).sort(),
+            workflowAction,
+            source: "comment",
+          },
+        });
+      }
+    }
+
     const comment = await svc.addComment(id, req.body.body, {
       agentId: actor.agentId ?? undefined,
       userId: actor.actorType === "user" ? actor.actorId : undefined,
@@ -1411,6 +1523,8 @@ export function issueRoutes(db: Db, storage: StorageService) {
         bodySnippet: comment.body.slice(0, 120),
         identifier: currentIssue.identifier,
         issueTitle: currentIssue.title,
+        workflowAction,
+        ...(updatedWorkProductIds.length > 0 ? { workProductIds: updatedWorkProductIds } : {}),
         ...(reopened ? { reopened: true, reopenedFrom: reopenFromStatus, source: "comment" } : {}),
         ...(interruptedRunId ? { interruptedRunId } : {}),
       },
@@ -1422,8 +1536,12 @@ export function issueRoutes(db: Db, storage: StorageService) {
       const assigneeId = currentIssue.assigneeAgentId;
       const actorIsAgent = actor.actorType === "agent";
       const selfComment = actorIsAgent && actor.actorId === assigneeId;
-      const skipWake = selfComment || isClosed;
-      if (assigneeId && (reopened || !skipWake)) {
+      const skipWake = selfComment || isClosedIssueStatus(currentIssue.status);
+      const workflowWakeReason = getCommentWorkflowWakeReason(workflowAction);
+      const suppressDefaultWake = workflowAction === "request_review" || workflowAction === "approve";
+      const shouldWakeForStandardComment = !suppressDefaultWake && !skipWake;
+
+      if (assigneeId && (reopened || workflowWakeReason || shouldWakeForStandardComment)) {
         if (reopened) {
           wakeups.set(assigneeId, {
             source: "automation",
@@ -1445,6 +1563,30 @@ export function issueRoutes(db: Db, storage: StorageService) {
               source: "issue.comment.reopen",
               wakeReason: "issue_reopened_via_comment",
               reopenedFrom: reopenFromStatus,
+              ...(interruptedRunId ? { interruptedRunId } : {}),
+            },
+          });
+        } else if (workflowWakeReason) {
+          wakeups.set(assigneeId, {
+            source: "automation",
+            triggerDetail: "system",
+            reason: workflowWakeReason,
+            payload: {
+              issueId: currentIssue.id,
+              commentId: comment.id,
+              workflowAction,
+              mutation: "comment",
+              ...(interruptedRunId ? { interruptedRunId } : {}),
+            },
+            requestedByActorType: actor.actorType,
+            requestedByActorId: actor.actorId,
+            contextSnapshot: {
+              issueId: currentIssue.id,
+              taskId: currentIssue.id,
+              commentId: comment.id,
+              source: `issue.comment.${workflowAction}`,
+              wakeReason: workflowWakeReason,
+              workflowAction,
               ...(interruptedRunId ? { interruptedRunId } : {}),
             },
           });

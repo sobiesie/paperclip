@@ -11,6 +11,11 @@ const mockIssueService = vi.hoisted(() => ({
   findMentionedAgents: vi.fn(),
 }));
 
+const mockWorkProductService = vi.hoisted(() => ({
+  listForIssue: vi.fn(),
+  update: vi.fn(),
+}));
+
 const mockAccessService = vi.hoisted(() => ({
   canUser: vi.fn(),
   hasPermission: vi.fn(),
@@ -41,7 +46,7 @@ vi.mock("../services/index.js", () => ({
   routineService: () => ({
     syncRunStatusForIssue: vi.fn(async () => undefined),
   }),
-  workProductService: () => ({}),
+  workProductService: () => mockWorkProductService,
 }));
 
 function createApp() {
@@ -62,7 +67,7 @@ function createApp() {
   return app;
 }
 
-function makeIssue(status: "todo" | "done") {
+function makeIssue(status: string) {
   return {
     id: "11111111-1111-4111-8111-111111111111",
     companyId: "company-1",
@@ -75,9 +80,38 @@ function makeIssue(status: "todo" | "done") {
   };
 }
 
+function makeWorkProduct(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "work-product-1",
+    companyId: "company-1",
+    issueId: "11111111-1111-4111-8111-111111111111",
+    projectId: null,
+    executionWorkspaceId: null,
+    runtimeServiceId: null,
+    type: "pull_request",
+    provider: "github",
+    externalId: null,
+    title: "PR 1",
+    url: "https://example.com/pr/1",
+    status: "active",
+    reviewState: "none",
+    isPrimary: true,
+    healthStatus: "unknown",
+    summary: null,
+    metadata: null,
+    createdByRunId: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  };
+}
+
 describe("issue comment reopen routes", () => {
+  let workProducts: Array<ReturnType<typeof makeWorkProduct>> = [];
+
   beforeEach(() => {
     vi.clearAllMocks();
+    workProducts = [];
     mockIssueService.addComment.mockResolvedValue({
       id: "comment-1",
       issueId: "11111111-1111-4111-8111-111111111111",
@@ -89,6 +123,12 @@ describe("issue comment reopen routes", () => {
       authorUserId: "local-board",
     });
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
+    mockWorkProductService.listForIssue.mockImplementation(async () => workProducts);
+    mockWorkProductService.update.mockImplementation(async (id: string, patch: Record<string, unknown>) => {
+      const existing = workProducts.find((workProduct) => workProduct.id === id) ?? null;
+      if (!existing) return null;
+      return { ...existing, ...patch };
+    });
   });
 
   it("treats reopen=true as a no-op when the issue is already open", async () => {
@@ -142,5 +182,156 @@ describe("issue comment reopen routes", () => {
         }),
       }),
     );
+  });
+
+  it("moves coding work into review from an issue comment action", async () => {
+    let currentIssue = makeIssue("in_progress");
+    workProducts = [
+      makeWorkProduct(),
+      makeWorkProduct({ id: "work-product-2", isPrimary: false }),
+    ];
+    mockIssueService.getById.mockResolvedValue(currentIssue);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+      currentIssue = { ...currentIssue, ...patch };
+      return currentIssue;
+    });
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "ready for review", workflowAction: "request_review" });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.update).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111", {
+      status: "in_review",
+    });
+    expect(mockWorkProductService.update).toHaveBeenCalledTimes(1);
+    expect(mockWorkProductService.update).toHaveBeenCalledWith("work-product-1", {
+      status: "ready_for_review",
+      reviewState: "needs_board_review",
+    });
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.updated",
+        details: expect.objectContaining({
+          status: "in_review",
+          workflowAction: "request_review",
+        }),
+      }),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.work_product_updated",
+        details: expect.objectContaining({
+          workProductId: "work-product-1",
+          workflowAction: "request_review",
+        }),
+      }),
+    );
+  });
+
+  it("sends work back for changes and wakes the assignee", async () => {
+    let currentIssue = makeIssue("in_review");
+    workProducts = [
+      makeWorkProduct({
+        status: "ready_for_review",
+        reviewState: "needs_board_review",
+      }),
+    ];
+    mockIssueService.getById.mockResolvedValue(currentIssue);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+      currentIssue = { ...currentIssue, ...patch };
+      return currentIssue;
+    });
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "Please address the review comments", workflowAction: "changes_requested" });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.update).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111", {
+      status: "todo",
+    });
+    expect(mockWorkProductService.update).toHaveBeenCalledWith("work-product-1", {
+      status: "changes_requested",
+      reviewState: "changes_requested",
+    });
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      "22222222-2222-4222-8222-222222222222",
+      expect.objectContaining({
+        reason: "issue_changes_requested",
+        payload: expect.objectContaining({
+          workflowAction: "changes_requested",
+        }),
+      }),
+    );
+  });
+
+  it("continues work from review and clears review state on the primary work product", async () => {
+    let currentIssue = makeIssue("in_review");
+    workProducts = [
+      makeWorkProduct({
+        status: "changes_requested",
+        reviewState: "changes_requested",
+      }),
+    ];
+    mockIssueService.getById.mockResolvedValue(currentIssue);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+      currentIssue = { ...currentIssue, ...patch };
+      return currentIssue;
+    });
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "continue with the refactor", workflowAction: "continue" });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.update).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111", {
+      status: "todo",
+    });
+    expect(mockWorkProductService.update).toHaveBeenCalledWith("work-product-1", {
+      status: "active",
+      reviewState: "none",
+    });
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      "22222222-2222-4222-8222-222222222222",
+      expect.objectContaining({
+        reason: "issue_continue_requested",
+        payload: expect.objectContaining({
+          workflowAction: "continue",
+        }),
+      }),
+    );
+  });
+
+  it("approves coding work and closes the issue", async () => {
+    let currentIssue = makeIssue("in_review");
+    workProducts = [
+      makeWorkProduct({
+        status: "ready_for_review",
+        reviewState: "needs_board_review",
+      }),
+    ];
+    mockIssueService.getById.mockResolvedValue(currentIssue);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+      currentIssue = { ...currentIssue, ...patch };
+      return currentIssue;
+    });
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "Looks good to me", workflowAction: "approve" });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.update).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111", {
+      status: "done",
+    });
+    expect(mockWorkProductService.update).toHaveBeenCalledWith("work-product-1", {
+      status: "approved",
+      reviewState: "approved",
+    });
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 });

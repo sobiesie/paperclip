@@ -122,6 +122,14 @@ export type IssueStatus = (typeof ISSUE_STATUSES)[number];
 export const ISSUE_PRIORITIES = ["critical", "high", "medium", "low"] as const;
 export type IssuePriority = (typeof ISSUE_PRIORITIES)[number];
 
+export const ISSUE_COMMENT_WORKFLOW_ACTIONS = [
+  "continue",
+  "request_review",
+  "changes_requested",
+  "approve",
+] as const;
+export type IssueCommentWorkflowAction = (typeof ISSUE_COMMENT_WORKFLOW_ACTIONS)[number];
+
 export const ISSUE_ORIGIN_KINDS = ["manual", "routine_execution"] as const;
 export type IssueOriginKind = (typeof ISSUE_ORIGIN_KINDS)[number];
 
