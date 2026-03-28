@@ -48,6 +48,17 @@ const COMMENT_WORKFLOW_FALLBACK_TYPES = new Set<IssueWorkProduct["type"]>([
   "preview_url",
   "document",
 ]);
+const COMMENT_WORKFLOW_COMMAND_ALIASES: Record<string, IssueCommentWorkflowAction> = {
+  "/approve": "approve",
+  "/changes": "changes_requested",
+  "/changes-requested": "changes_requested",
+  "/continue": "continue",
+  "/fix": "changes_requested",
+  "/request-changes": "changes_requested",
+  "/request-review": "request_review",
+  "/resume": "continue",
+  "/review": "request_review",
+};
 
 function isClosedIssueStatus(status: string) {
   return status === "done" || status === "cancelled";
@@ -107,6 +118,12 @@ function getCommentWorkflowWakeReason(workflowAction: IssueCommentWorkflowAction
     default:
       return null;
   }
+}
+
+function inferCommentWorkflowAction(body: string): IssueCommentWorkflowAction | undefined {
+  const match = body.trim().match(/^\/[a-z-]+/i);
+  if (!match) return undefined;
+  return COMMENT_WORKFLOW_COMMAND_ALIASES[match[0].toLowerCase()];
 }
 
 export function issueRoutes(db: Db, storage: StorageService) {
@@ -1376,7 +1393,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const actor = getActorInfo(req);
     const reopenRequested = req.body.reopen === true;
     const interruptRequested = req.body.interrupt === true;
-    const workflowAction = req.body.workflowAction;
+    const workflowAction = req.body.workflowAction ?? inferCommentWorkflowAction(req.body.body);
     const wasClosed = isClosedIssueStatus(issue.status);
     const workflowStatus = getCommentWorkflowIssueStatus(workflowAction, issue.status);
     const desiredStatus = workflowStatus ?? (reopenRequested && wasClosed ? "todo" : null);
@@ -1502,6 +1519,8 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const comment = await svc.addComment(id, req.body.body, {
       agentId: actor.agentId ?? undefined,
       userId: actor.actorType === "user" ? actor.actorId : undefined,
+    }, {
+      workflowAction: workflowAction ?? null,
     });
 
     if (actor.runId) {

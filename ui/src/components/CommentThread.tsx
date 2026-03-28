@@ -2,6 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent } from "re
 import { Link, useLocation } from "react-router-dom";
 import type { Agent, IssueComment, IssueCommentWorkflowAction } from "@paperclipai/shared";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Check, Copy, Paperclip } from "lucide-react";
 import { Identity } from "./Identity";
@@ -47,6 +48,23 @@ const COMMENT_ACTION_BUTTON_LABELS: Record<CommentActionMode, string> = {
   request_review: "Request review",
   changes_requested: "Request changes",
   approve: "Approve",
+};
+
+const COMMENT_WORKFLOW_BADGE_LABELS: Record<IssueCommentWorkflowAction, string> = {
+  continue: "Continue",
+  request_review: "Review",
+  changes_requested: "Changes",
+  approve: "Approved",
+};
+
+const COMMENT_WORKFLOW_BADGE_VARIANTS: Record<
+  IssueCommentWorkflowAction,
+  "default" | "secondary" | "outline" | "destructive"
+> = {
+  continue: "secondary",
+  request_review: "outline",
+  changes_requested: "destructive",
+  approve: "default",
 };
 
 function isClosedIssueStatus(status?: string) {
@@ -208,16 +226,26 @@ const TimelineList = memo(function TimelineList({
             className={`border p-3 overflow-hidden min-w-0 rounded-sm transition-colors duration-1000 ${isHighlighted ? "border-primary/50 bg-primary/5" : "border-border"}`}
           >
             <div className="flex items-center justify-between mb-1">
-              {comment.authorAgentId ? (
-                <Link to={`/agents/${comment.authorAgentId}`} className="hover:underline">
-                  <Identity
-                    name={agentMap?.get(comment.authorAgentId)?.name ?? comment.authorAgentId.slice(0, 8)}
-                    size="sm"
-                  />
-                </Link>
-              ) : (
-                <Identity name="You" size="sm" />
-              )}
+              <div className="flex items-center gap-2">
+                {comment.authorAgentId ? (
+                  <Link to={`/agents/${comment.authorAgentId}`} className="hover:underline">
+                    <Identity
+                      name={agentMap?.get(comment.authorAgentId)?.name ?? comment.authorAgentId.slice(0, 8)}
+                      size="sm"
+                    />
+                  </Link>
+                ) : (
+                  <Identity name="You" size="sm" />
+                )}
+                {comment.workflowAction ? (
+                  <Badge
+                    variant={COMMENT_WORKFLOW_BADGE_VARIANTS[comment.workflowAction]}
+                    className="px-1.5 py-0 text-[10px]"
+                  >
+                    {COMMENT_WORKFLOW_BADGE_LABELS[comment.workflowAction]}
+                  </Badge>
+                ) : null}
+              </div>
               <span className="flex items-center gap-1.5">
                 {companyId ? (
                   <PluginSlotOutlet
@@ -471,6 +499,9 @@ export function CommentThread({
           imageUploadHandler={imageUploadHandler}
           contentClassName="min-h-[60px] text-sm"
         />
+        <p className="text-[11px] text-muted-foreground">
+          Slash commands: <code>/review</code>, <code>/continue</code>, <code>/fix</code>, <code>/approve</code>
+        </p>
         <div className="flex items-center justify-end gap-3">
           {(imageUploadHandler || onAttachImage) && (
             <div className="mr-auto flex items-center gap-3">

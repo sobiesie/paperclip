@@ -334,4 +334,73 @@ describe("issue comment reopen routes", () => {
     });
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
+
+  it("infers request_review from a /review comment without an explicit workflow action", async () => {
+    let currentIssue = makeIssue("in_progress");
+    workProducts = [makeWorkProduct()];
+    mockIssueService.getById.mockResolvedValue(currentIssue);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+      currentIssue = { ...currentIssue, ...patch };
+      return currentIssue;
+    });
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "/review" });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.update).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111", {
+      status: "in_review",
+    });
+    expect(mockWorkProductService.update).toHaveBeenCalledWith("work-product-1", {
+      status: "ready_for_review",
+      reviewState: "needs_board_review",
+    });
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.comment_added",
+        details: expect.objectContaining({
+          workflowAction: "request_review",
+        }),
+      }),
+    );
+  });
+
+  it("infers changes_requested from a /fix comment and wakes the assignee", async () => {
+    let currentIssue = makeIssue("in_review");
+    workProducts = [
+      makeWorkProduct({
+        status: "ready_for_review",
+        reviewState: "needs_board_review",
+      }),
+    ];
+    mockIssueService.getById.mockResolvedValue(currentIssue);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+      currentIssue = { ...currentIssue, ...patch };
+      return currentIssue;
+    });
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "/fix parser regression from review" });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.update).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111", {
+      status: "todo",
+    });
+    expect(mockWorkProductService.update).toHaveBeenCalledWith("work-product-1", {
+      status: "changes_requested",
+      reviewState: "changes_requested",
+    });
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      "22222222-2222-4222-8222-222222222222",
+      expect.objectContaining({
+        reason: "issue_changes_requested",
+        payload: expect.objectContaining({
+          workflowAction: "changes_requested",
+        }),
+      }),
+    );
+  });
 });

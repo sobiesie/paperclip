@@ -1,5 +1,6 @@
 import type {
   AgentAdapterType,
+  AgentInstructionPreset,
   PauseReason,
   AgentRole,
   AgentStatus,
@@ -75,6 +76,7 @@ export interface Agent {
   runtimeConfig: Record<string, unknown>;
   budgetMonthlyCents: number;
   spentMonthlyCents: number;
+  instructionPreset?: AgentInstructionPreset | null;
   pauseReason: PauseReason | null;
   pausedAt: Date | null;
   permissions: AgentPermissions;

@@ -1,0 +1,1 @@
+ALTER TABLE "issue_comments" ADD COLUMN "workflow_action" text;

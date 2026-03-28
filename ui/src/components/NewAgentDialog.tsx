@@ -21,6 +21,10 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { OpenCodeLogoIcon } from "./OpenCodeLogoIcon";
+import {
+  AGENT_INSTRUCTION_PRESET_OPTIONS,
+  type AgentInstructionPresetOption,
+} from "../lib/agent-instruction-presets";
 
 type AdvancedAdapterType =
   | "claude_local"
@@ -117,6 +121,14 @@ export function NewAgentDialog() {
     navigate(`/agents/new?adapterType=${encodeURIComponent(adapterType)}`);
   }
 
+  function handleCodingPresetPick(option: AgentInstructionPresetOption) {
+    closeNewAgent();
+    setShowAdvancedCards(false);
+    navigate(
+      `/agents/new?adapterType=codex_local&preset=${encodeURIComponent(option.id)}`,
+    );
+  }
+
   return (
     <Dialog
       open={newAgentOpen}
@@ -188,8 +200,26 @@ export function NewAgentDialog() {
                   Back
                 </button>
                 <p className="text-sm text-muted-foreground">
-                  Choose your adapter type for advanced setup.
+                  Start from a coding preset, or choose an adapter type for fully custom setup.
                 </p>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">Coding presets</p>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {AGENT_INSTRUCTION_PRESET_OPTIONS.map((option) => (
+                    <button
+                      key={option.id}
+                      className="flex flex-col items-start gap-1 rounded-md border border-border p-3 text-left transition-colors hover:bg-accent/50"
+                      onClick={() => handleCodingPresetPick(option)}
+                    >
+                      <span className="text-xs font-medium">{option.label}</span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {option.description}
+                      </span>
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">

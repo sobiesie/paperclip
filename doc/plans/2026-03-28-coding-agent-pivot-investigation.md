@@ -3,6 +3,21 @@
 Date: 2026-03-28
 Status: exploratory product and architecture investigation
 
+## Progress update
+
+The first implementation slices are now underway in the product:
+
+- issue comments support explicit coding workflow actions and slash-command inference for `continue`, `review`, `fix`, and `approve`
+- issue comments persist their workflow action so review handoffs are durable in the timeline
+- new agent creation now has coding-oriented presets for builder, reviewer, and fixer agents with coding-specific bundled instructions
+
+That means the repo now has a real foundation for the loop this investigation described:
+
+- implement
+- request review
+- fix requested changes
+- continue until done
+
 ## Question
 
 Can Paperclip be converted from a control plane for AI companies into a control plane for coding agents that manage one or more codebases, especially around loops like:

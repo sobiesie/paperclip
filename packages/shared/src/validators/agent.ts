@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   AGENT_ADAPTER_TYPES,
   AGENT_ICON_NAMES,
+  AGENT_INSTRUCTION_PRESETS,
   AGENT_ROLES,
   AGENT_STATUSES,
 } from "../constants.js";
@@ -46,6 +47,7 @@ const adapterConfigSchema = z.record(z.unknown()).superRefine((value, ctx) => {
 export const createAgentSchema = z.object({
   name: z.string().min(1),
   role: z.enum(AGENT_ROLES).optional().default("general"),
+  instructionPreset: z.enum(AGENT_INSTRUCTION_PRESETS).optional().nullable(),
   title: z.string().optional().nullable(),
   icon: z.enum(AGENT_ICON_NAMES).optional().nullable(),
   reportsTo: z.string().uuid().optional().nullable(),
@@ -69,7 +71,7 @@ export const createAgentHireSchema = createAgentSchema.extend({
 export type CreateAgentHire = z.infer<typeof createAgentHireSchema>;
 
 export const updateAgentSchema = createAgentSchema
-  .omit({ permissions: true })
+  .omit({ permissions: true, instructionPreset: true })
   .partial()
   .extend({
     permissions: z.never().optional(),

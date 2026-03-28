@@ -124,6 +124,7 @@ function makeAgent(adapterType: string) {
     adapterType,
     adapterConfig: {},
     runtimeConfig: {},
+    metadata: null,
     permissions: null,
     updatedAt: new Date(),
   };
@@ -396,6 +397,74 @@ describe("agent skill routes", () => {
       }),
       expect.objectContaining({
         "AGENTS.md": expect.stringContaining("Keep the work moving until it's done."),
+      }),
+      { entryFile: "AGENTS.md", replaceExisting: false },
+    );
+  });
+
+  it("stores coding presets in metadata and materializes the reviewer instruction set", async () => {
+    const res = await request(createApp())
+      .post("/api/companies/company-1/agents")
+      .send({
+        name: "Reviewer",
+        role: "qa",
+        instructionPreset: "coding_reviewer",
+        adapterType: "claude_local",
+        adapterConfig: {},
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockAgentService.create).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({
+        metadata: {
+          paperclip: {
+            instructionPreset: "coding_reviewer",
+          },
+        },
+      }),
+    );
+    expect(mockAgentService.create.mock.calls.at(-1)?.[1]).not.toHaveProperty("instructionPreset");
+    expect(mockAgentInstructionsService.materializeManagedBundle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: "qa",
+        metadata: {
+          paperclip: {
+            instructionPreset: "coding_reviewer",
+          },
+        },
+      }),
+      expect.objectContaining({
+        "AGENTS.md": expect.stringContaining("You are a dedicated code reviewer"),
+      }),
+      { entryFile: "AGENTS.md", replaceExisting: false },
+    );
+  });
+
+  it("ignores coding presets for CEO agents and keeps the CEO bundle", async () => {
+    const res = await request(createApp())
+      .post("/api/companies/company-1/agents")
+      .send({
+        name: "CEO",
+        role: "ceo",
+        instructionPreset: "coding_builder",
+        adapterType: "claude_local",
+        adapterConfig: {},
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockAgentService.create).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({
+        metadata: null,
+      }),
+    );
+    expect(mockAgentInstructionsService.materializeManagedBundle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: "ceo",
+      }),
+      expect.objectContaining({
+        "AGENTS.md": expect.stringContaining("You are the CEO."),
       }),
       { entryFile: "AGENTS.md", replaceExisting: false },
     );

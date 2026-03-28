@@ -63,6 +63,19 @@ export const AGENT_ROLE_LABELS: Record<AgentRole, string> = {
   general: "General",
 };
 
+export const AGENT_INSTRUCTION_PRESETS = [
+  "coding_builder",
+  "coding_reviewer",
+  "coding_fixer",
+] as const;
+export type AgentInstructionPreset = (typeof AGENT_INSTRUCTION_PRESETS)[number];
+
+export const AGENT_INSTRUCTION_PRESET_LABELS: Record<AgentInstructionPreset, string> = {
+  coding_builder: "Coding Builder",
+  coding_reviewer: "Code Reviewer",
+  coding_fixer: "Bug Fixer",
+};
+
 export const AGENT_ICON_NAMES = [
   "bot",
   "cpu",

@@ -15,6 +15,7 @@ import {
 import { isUuidLike, normalizeAgentUrlKey } from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { normalizeAgentPermissions } from "./agent-permissions.js";
+import { getAgentInstructionPreset } from "./agent-instruction-presets.js";
 import { REDACTED_EVENT_VALUE, sanitizeRecord } from "../redaction.js";
 
 function hashToken(token: string) {
@@ -202,6 +203,7 @@ export function agentService(db: Db) {
   function normalizeAgentRow(row: typeof agents.$inferSelect) {
     return withUrlKey({
       ...row,
+      instructionPreset: getAgentInstructionPreset(row.metadata),
       permissions: normalizeAgentPermissions(row.permissions, row.role),
     });
   }

@@ -1,4 +1,9 @@
-import type { IssueOriginKind, IssuePriority, IssueStatus } from "../constants.js";
+import type {
+  IssueCommentWorkflowAction,
+  IssueOriginKind,
+  IssuePriority,
+  IssueStatus,
+} from "../constants.js";
 import type { Goal } from "./goal.js";
 import type { Project, ProjectWorkspace } from "./project.js";
 import type { ExecutionWorkspace, IssueExecutionWorkspaceSettings } from "./workspace-runtime.js";
@@ -153,6 +158,7 @@ export interface IssueComment {
   authorAgentId: string | null;
   authorUserId: string | null;
   body: string;
+  workflowAction: IssueCommentWorkflowAction | null;
   createdAt: Date;
   updatedAt: Date;
 }

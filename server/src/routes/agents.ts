@@ -61,6 +61,7 @@ import {
   loadDefaultAgentInstructionsBundle,
   resolveDefaultAgentInstructionsBundleRole,
 } from "../services/default-agent-instructions.js";
+import { applyAgentInstructionPresetMetadata } from "../services/agent-instruction-presets.js";
 
 export function agentRoutes(db: Db) {
   const DEFAULT_INSTRUCTIONS_PATH_KEYS: Record<string, string> = {
@@ -449,6 +450,7 @@ export function agentRoutes(db: Db) {
     role: string;
     adapterType: string;
     adapterConfig: unknown;
+    metadata?: unknown;
   }>(agent: T): Promise<T> {
     if (!DEFAULT_MANAGED_INSTRUCTIONS_ADAPTER_TYPES.has(agent.adapterType)) {
       return agent;
@@ -469,7 +471,9 @@ export function agentRoutes(db: Db) {
       ? adapterConfig.promptTemplate
       : "";
     const files = promptTemplate.trim().length === 0
-      ? await loadDefaultAgentInstructionsBundle(resolveDefaultAgentInstructionsBundleRole(agent.role))
+      ? await loadDefaultAgentInstructionsBundle(
+        resolveDefaultAgentInstructionsBundleRole(agent.role, agent.metadata),
+      )
       : { "AGENTS.md": promptTemplate };
     const materialized = await instructions.materializeManagedBundle(
       agent,
@@ -1160,8 +1164,15 @@ export function agentRoutes(db: Db) {
       desiredSkills: requestedDesiredSkills,
       sourceIssueId: _sourceIssueId,
       sourceIssueIds: _sourceIssueIds,
+      instructionPreset,
       ...hireInput
     } = req.body;
+    const effectiveInstructionPreset =
+      hireInput.role === "ceo" ? null : (instructionPreset ?? null);
+    const normalizedMetadata = applyAgentInstructionPresetMetadata(
+      hireInput.metadata,
+      effectiveInstructionPreset,
+    );
     const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
       hireInput.adapterType,
       ((hireInput.adapterConfig ?? {}) as Record<string, unknown>),
@@ -1185,6 +1196,7 @@ export function agentRoutes(db: Db) {
     const normalizedHireInput = {
       ...hireInput,
       adapterConfig: normalizedAdapterConfig,
+      metadata: normalizedMetadata,
     };
 
     const company = await db
@@ -1320,8 +1332,15 @@ export function agentRoutes(db: Db) {
 
     const {
       desiredSkills: requestedDesiredSkills,
+      instructionPreset,
       ...createInput
     } = req.body;
+    const effectiveInstructionPreset =
+      createInput.role === "ceo" ? null : (instructionPreset ?? null);
+    const normalizedMetadata = applyAgentInstructionPresetMetadata(
+      createInput.metadata,
+      effectiveInstructionPreset,
+    );
     const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
       createInput.adapterType,
       ((createInput.adapterConfig ?? {}) as Record<string, unknown>),
@@ -1346,6 +1365,7 @@ export function agentRoutes(db: Db) {
     const createdAgent = await svc.create(companyId, {
       ...createInput,
       adapterConfig: normalizedAdapterConfig,
+      metadata: normalizedMetadata,
       status: "idle",
       spentMonthlyCents: 0,
       lastHeartbeatAt: null,

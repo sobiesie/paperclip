@@ -1,6 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@/lib/router";
-import { AGENT_ROLE_LABELS, type Agent, type AgentRuntimeState } from "@paperclipai/shared";
+import {
+  AGENT_INSTRUCTION_PRESET_LABELS,
+  AGENT_ROLE_LABELS,
+  type Agent,
+  type AgentRuntimeState,
+} from "@paperclipai/shared";
 import { agentsApi } from "../api/agents";
 import { useCompany } from "../context/CompanyContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -56,6 +61,13 @@ export function AgentProperties({ agent, runtimeState }: AgentPropertiesProps) {
         <PropertyRow label="Role">
           <span className="text-sm">{roleLabels[agent.role] ?? agent.role}</span>
         </PropertyRow>
+        {agent.instructionPreset && (
+          <PropertyRow label="Preset">
+            <span className="text-sm">
+              {AGENT_INSTRUCTION_PRESET_LABELS[agent.instructionPreset]}
+            </span>
+          </PropertyRow>
+        )}
         {agent.title && (
           <PropertyRow label="Title">
             <span className="text-sm">{agent.title}</span>

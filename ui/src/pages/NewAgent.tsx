@@ -6,7 +6,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { agentsApi } from "../api/agents";
 import { companySkillsApi } from "../api/companySkills";
 import { queryKeys } from "../lib/queryKeys";
-import { AGENT_ROLES } from "@paperclipai/shared";
+import { AGENT_ROLES, type AgentInstructionPreset } from "@paperclipai/shared";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -27,6 +27,12 @@ import {
 } from "@paperclipai/adapter-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
+import {
+  AGENT_INSTRUCTION_PRESET_OPTIONS,
+  buildCreateValuesForInstructionPreset,
+  getAgentInstructionPresetOption,
+  isAgentInstructionPreset,
+} from "../lib/agent-instruction-presets";
 
 const SUPPORTED_ADVANCED_ADAPTER_TYPES = new Set<CreateConfigValues["adapterType"]>([
   "claude_local",
@@ -64,10 +70,14 @@ export function NewAgent() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const presetAdapterType = searchParams.get("adapterType");
+  const requestedInstructionPreset = searchParams.get("preset");
 
   const [name, setName] = useState("");
   const [title, setTitle] = useState("");
   const [role, setRole] = useState("general");
+  const [instructionPreset, setInstructionPreset] = useState<AgentInstructionPreset | null>(
+    isAgentInstructionPreset(requestedInstructionPreset) ? requestedInstructionPreset : null,
+  );
   const [reportsTo, setReportsTo] = useState<string | null>(null);
   const [configValues, setConfigValues] = useState<CreateConfigValues>(defaultCreateValues);
   const [selectedSkillKeys, setSelectedSkillKeys] = useState<string[]>([]);
@@ -116,7 +126,38 @@ export function NewAgent() {
     }
   }, [isFirstAgent]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  function applyInstructionPreset(
+    nextPreset: AgentInstructionPreset,
+    previousPreset: AgentInstructionPreset | null = instructionPreset,
+  ) {
+    const nextOption = getAgentInstructionPresetOption(nextPreset);
+    const previousOption = previousPreset ? getAgentInstructionPresetOption(previousPreset) : null;
+    setInstructionPreset(nextPreset);
+    setRole(nextOption.role);
+    setName((prev) => {
+      const trimmed = prev.trim();
+      if (!trimmed || trimmed === previousOption?.defaultName) return nextOption.defaultName;
+      return prev;
+    });
+    setTitle((prev) => {
+      const trimmed = prev.trim();
+      if (!trimmed || trimmed === previousOption?.defaultTitle) return nextOption.defaultTitle;
+      return prev;
+    });
+    setConfigValues(buildCreateValuesForInstructionPreset(nextPreset));
+  }
+
   useEffect(() => {
+    if (isFirstAgent) {
+      setInstructionPreset(null);
+      return;
+    }
+    if (!isAgentInstructionPreset(requestedInstructionPreset)) return;
+    applyInstructionPreset(requestedInstructionPreset);
+  }, [isFirstAgent, requestedInstructionPreset]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (instructionPreset) return;
     const requested = presetAdapterType;
     if (!requested) return;
     if (!SUPPORTED_ADVANCED_ADAPTER_TYPES.has(requested as CreateConfigValues["adapterType"])) {
@@ -126,7 +167,7 @@ export function NewAgent() {
       if (prev.adapterType === requested) return prev;
       return createValuesForAdapterType(requested as CreateConfigValues["adapterType"]);
     });
-  }, [presetAdapterType]);
+  }, [instructionPreset, presetAdapterType]);
 
   const createAgent = useMutation({
     mutationFn: (data: Record<string, unknown>) =>
@@ -181,6 +222,10 @@ export function NewAgent() {
       name: name.trim(),
       role: effectiveRole,
       ...(title.trim() ? { title: title.trim() } : {}),
+      ...(instructionPreset ? { instructionPreset } : {}),
+      ...(instructionPreset
+        ? { capabilities: getAgentInstructionPresetOption(instructionPreset).capabilities }
+        : {}),
       ...(reportsTo ? { reportsTo } : {}),
       ...(selectedSkillKeys.length > 0 ? { desiredSkills: selectedSkillKeys } : {}),
       adapterType: configValues.adapterType,
@@ -239,6 +284,49 @@ export function NewAgent() {
             onChange={(e) => setTitle(e.target.value)}
           />
         </div>
+
+        {!isFirstAgent && (
+          <div className="border-t border-border px-4 py-3">
+            <div className="space-y-2">
+              <div>
+                <h2 className="text-xs font-medium text-muted-foreground">Coding preset</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Seed builder, reviewer, and fixer agents with coding-focused instructions and Codex worktree defaults.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className={cn(
+                    "rounded-md border border-border px-2.5 py-1.5 text-xs transition-colors",
+                    instructionPreset === null ? "bg-accent text-foreground" : "hover:bg-accent/50",
+                  )}
+                  onClick={() => setInstructionPreset(null)}
+                >
+                  Custom
+                </button>
+                {AGENT_INSTRUCTION_PRESET_OPTIONS.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    className={cn(
+                      "rounded-md border border-border px-2.5 py-1.5 text-xs transition-colors",
+                      instructionPreset === option.id ? "bg-accent text-foreground" : "hover:bg-accent/50",
+                    )}
+                    onClick={() => applyInstructionPreset(option.id)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              {instructionPreset && (
+                <p className="text-xs text-muted-foreground">
+                  {getAgentInstructionPresetOption(instructionPreset).description}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Property chips: Role + Reports To */}
         <div className="flex items-center gap-1.5 px-4 py-2 border-t border-border flex-wrap">
