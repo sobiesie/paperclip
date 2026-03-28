@@ -10,12 +10,14 @@ import {
   createIssueSchema,
   linkIssueApprovalSchema,
   issueDocumentKeySchema,
+  type IssueCodingWorkflowState,
   updateIssueWorkProductSchema,
   upsertIssueDocumentSchema,
   updateIssueSchema,
   type IssueCommentWorkflowAction,
   type IssueStatus,
   type IssueWorkProduct,
+  type ProjectCodingWorkflowPolicy,
 } from "@paperclipai/shared";
 import type { StorageService } from "../storage/types.js";
 import { validate } from "../middleware/validate.js";
@@ -120,10 +122,137 @@ function getCommentWorkflowWakeReason(workflowAction: IssueCommentWorkflowAction
   }
 }
 
+function sameValue(left: unknown, right: unknown) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function parseIssueCodingWorkflowState(raw: unknown): IssueCodingWorkflowState | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const builderAgentId =
+    typeof (raw as Record<string, unknown>).builderAgentId === "string"
+      ? ((raw as Record<string, unknown>).builderAgentId as string)
+      : null;
+  const reviewerAgentId =
+    typeof (raw as Record<string, unknown>).reviewerAgentId === "string"
+      ? ((raw as Record<string, unknown>).reviewerAgentId as string)
+      : null;
+  if (!builderAgentId && !reviewerAgentId) return null;
+  return { builderAgentId, reviewerAgentId };
+}
+
+async function resolveAssignableAgentId(
+  companyId: string,
+  agentId: string | null | undefined,
+  agentsSvc: ReturnType<typeof agentService>,
+) {
+  if (!agentId) return null;
+  const agent = await agentsSvc.getById(agentId);
+  if (!agent || agent.companyId !== companyId) return null;
+  if (agent.status === "pending_approval" || agent.status === "terminated") return null;
+  return agent.id;
+}
+
+type CommentWorkflowHandoff = {
+  assigneeAgentId: string;
+  codingWorkflowState: IssueCodingWorkflowState;
+  wakeReason: string | null;
+  kind: "request_review" | "changes_requested" | "continue";
+};
+
+async function resolveCommentWorkflowHandoff(input: {
+  issue: {
+    companyId: string;
+    projectId: string | null;
+    assigneeAgentId: string | null;
+    codingWorkflowState?: IssueCodingWorkflowState | Record<string, unknown> | null;
+  };
+  workflowAction: IssueCommentWorkflowAction | undefined;
+  projectsSvc: ReturnType<typeof projectService>;
+  agentsSvc: ReturnType<typeof agentService>;
+}): Promise<CommentWorkflowHandoff | null> {
+  if (!input.issue.assigneeAgentId || !input.issue.projectId) return null;
+  if (
+    input.workflowAction !== "request_review" &&
+    input.workflowAction !== "changes_requested" &&
+    input.workflowAction !== "continue"
+  ) {
+    return null;
+  }
+
+  const project = await input.projectsSvc.getById(input.issue.projectId);
+  const policy = project?.executionWorkspacePolicy?.codingWorkflowPolicy as ProjectCodingWorkflowPolicy | null | undefined;
+  const currentState = parseIssueCodingWorkflowState(input.issue.codingWorkflowState);
+
+  if (input.workflowAction === "request_review") {
+    const reviewerAgentId = await resolveAssignableAgentId(
+      input.issue.companyId,
+      policy?.reviewerAgentId,
+      input.agentsSvc,
+    );
+    if (!reviewerAgentId || reviewerAgentId === input.issue.assigneeAgentId) return null;
+    return {
+      assigneeAgentId: reviewerAgentId,
+      codingWorkflowState: {
+        builderAgentId: input.issue.assigneeAgentId,
+        reviewerAgentId,
+      },
+      wakeReason: "issue_review_requested",
+      kind: "request_review",
+    };
+  }
+
+  const preferredFixerAgentId =
+    input.workflowAction === "changes_requested"
+      ? await resolveAssignableAgentId(
+        input.issue.companyId,
+        policy?.fixerAgentId,
+        input.agentsSvc,
+      )
+      : null;
+  const builderAgentId = await resolveAssignableAgentId(
+    input.issue.companyId,
+    currentState?.builderAgentId,
+    input.agentsSvc,
+  );
+  const nextAssigneeAgentId = preferredFixerAgentId ?? builderAgentId;
+  if (!nextAssigneeAgentId || nextAssigneeAgentId === input.issue.assigneeAgentId) return null;
+
+  return {
+    assigneeAgentId: nextAssigneeAgentId,
+    codingWorkflowState: {
+      builderAgentId: nextAssigneeAgentId,
+      reviewerAgentId: input.issue.assigneeAgentId,
+    },
+    wakeReason: null,
+    kind: input.workflowAction,
+  };
+}
+
 function inferCommentWorkflowAction(body: string): IssueCommentWorkflowAction | undefined {
   const match = body.trim().match(/^\/[a-z-]+/i);
   if (!match) return undefined;
   return COMMENT_WORKFLOW_COMMAND_ALIASES[match[0].toLowerCase()];
+}
+
+function inferWorkProductWorkflowAction(
+  previous: Pick<IssueWorkProduct, "type" | "status" | "reviewState">,
+  next: Pick<IssueWorkProduct, "type" | "status" | "reviewState">,
+): IssueCommentWorkflowAction | undefined {
+  if (next.type !== "pull_request") return undefined;
+
+  if (next.reviewState !== previous.reviewState) {
+    if (next.reviewState === "needs_board_review") return "request_review";
+    if (next.reviewState === "changes_requested") return "changes_requested";
+    if (next.reviewState === "approved") return "approve";
+  }
+
+  if (next.status !== previous.status) {
+    if (next.status === "ready_for_review") return "request_review";
+    if (next.status === "changes_requested") return "changes_requested";
+    if (next.status === "approved") return "approve";
+  }
+
+  return undefined;
 }
 
 export function issueRoutes(db: Db, storage: StorageService) {
@@ -200,6 +329,16 @@ export function issueRoutes(db: Db, storage: StorageService) {
       throw forbidden("Missing permission: tasks:assign");
     }
     throw unauthorized();
+  }
+
+  async function assertCanRouteCommentWorkflowAssignment(
+    req: Request,
+    issue: { companyId: string; assigneeAgentId: string | null },
+  ) {
+    if (req.actor.type === "agent" && req.actor.agentId && req.actor.agentId === issue.assigneeAgentId) {
+      return;
+    }
+    await assertCanAssignTasks(req, issue.companyId);
   }
 
   function requireAgentRunId(req: Request, res: Response) {
@@ -726,6 +865,76 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
     const actor = getActorInfo(req);
+    const workflowAction = inferWorkProductWorkflowAction(existing, product);
+    const issue = workflowAction ? await svc.getById(existing.issueId) : null;
+    let currentIssue = issue;
+    let workflowHandoff: CommentWorkflowHandoff | null = null;
+
+    if (currentIssue && workflowAction) {
+      workflowHandoff = await resolveCommentWorkflowHandoff({
+        issue: currentIssue,
+        workflowAction,
+        projectsSvc,
+        agentsSvc,
+      });
+      if (workflowHandoff && workflowHandoff.assigneeAgentId !== currentIssue.assigneeAgentId) {
+        await assertCanRouteCommentWorkflowAssignment(req, currentIssue);
+      }
+
+      const workflowIssuePatch: Record<string, unknown> = {};
+      const workflowStatus = getCommentWorkflowIssueStatus(workflowAction, currentIssue.status);
+      if (workflowStatus && workflowStatus !== currentIssue.status) {
+        workflowIssuePatch.status = workflowStatus;
+      }
+      if (workflowHandoff && workflowHandoff.assigneeAgentId !== currentIssue.assigneeAgentId) {
+        workflowIssuePatch.assigneeAgentId = workflowHandoff.assigneeAgentId;
+        workflowIssuePatch.assigneeUserId = null;
+        workflowIssuePatch.codingWorkflowState = workflowHandoff.codingWorkflowState;
+      }
+
+      if (Object.keys(workflowIssuePatch).length > 0) {
+        const updatedIssue = await svc.update(currentIssue.id, workflowIssuePatch);
+        if (updatedIssue) {
+          const previous: Record<string, unknown> = {};
+          for (const [key, value] of Object.entries(workflowIssuePatch)) {
+            const previousValue = (currentIssue as Record<string, unknown>)[key];
+            if (!sameValue(previousValue, value)) {
+              previous[key] = previousValue;
+            }
+          }
+          currentIssue = updatedIssue;
+
+          await logActivity(db, {
+            companyId: currentIssue.companyId,
+            actorType: actor.actorType,
+            actorId: actor.actorId,
+            agentId: actor.agentId,
+            runId: actor.runId,
+            action: "issue.updated",
+            entityType: "issue",
+            entityId: currentIssue.id,
+            details: {
+              ...("status" in workflowIssuePatch ? { status: currentIssue.status } : {}),
+              ...("assigneeAgentId" in workflowIssuePatch
+                ? { assigneeAgentId: currentIssue.assigneeAgentId, assigneeUserId: currentIssue.assigneeUserId }
+                : {}),
+              workflowAction,
+              source: "work_product",
+              workProductId: product.id,
+              identifier: currentIssue.identifier,
+              ...(workflowHandoff
+                ? {
+                    codingWorkflowHandoff: workflowHandoff.kind,
+                    automatedAssigneeChange: true,
+                  }
+                : {}),
+              _previous: previous,
+            },
+          });
+        }
+      }
+    }
+
     await logActivity(db, {
       companyId: existing.companyId,
       actorType: actor.actorType,
@@ -735,8 +944,52 @@ export function issueRoutes(db: Db, storage: StorageService) {
       action: "issue.work_product_updated",
       entityType: "issue",
       entityId: existing.issueId,
-      details: { workProductId: product.id, changedKeys: Object.keys(req.body).sort() },
+      details: {
+        workProductId: product.id,
+        changedKeys: Object.keys(req.body).sort(),
+        ...(workflowAction ? { workflowAction, source: "work_product" } : {}),
+      },
     });
+
+    if (actor.runId) {
+      await heartbeat.reportRunActivity(actor.runId).catch((err) =>
+        logger.warn({ err, runId: actor.runId }, "failed to clear detached run warning after work product update"));
+    }
+
+    const assigneeId = currentIssue?.assigneeAgentId ?? null;
+    const wakeReason = workflowHandoff?.wakeReason ?? getCommentWorkflowWakeReason(workflowAction);
+    const actorIsAgent = actor.actorType === "agent";
+    const selfWake = actorIsAgent && actor.actorId === assigneeId;
+    if (currentIssue && assigneeId && wakeReason && !selfWake && !isClosedIssueStatus(currentIssue.status)) {
+      await heartbeat.wakeup(assigneeId, {
+        source: "automation",
+        triggerDetail: "system",
+        reason: wakeReason,
+        payload: {
+          issueId: currentIssue.id,
+          workProductId: product.id,
+          workflowAction,
+          mutation: "work_product",
+          ...(workflowHandoff ? { codingWorkflowHandoff: workflowHandoff.kind } : {}),
+        },
+        requestedByActorType: actor.actorType,
+        requestedByActorId: actor.actorId,
+        contextSnapshot: {
+          issueId: currentIssue.id,
+          taskId: currentIssue.id,
+          workProductId: product.id,
+          source: `issue.work_product.${workflowAction}`,
+          wakeReason,
+          workflowAction,
+          ...(workflowHandoff ? { codingWorkflowHandoff: workflowHandoff.kind } : {}),
+        },
+      }).catch((err) =>
+        logger.warn(
+          { err, issueId: currentIssue.id, workProductId: product.id, workflowAction },
+          "failed to enqueue wakeup after work product workflow update",
+        ));
+    }
+
     res.json(product);
   });
 
@@ -1397,14 +1650,33 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const wasClosed = isClosedIssueStatus(issue.status);
     const workflowStatus = getCommentWorkflowIssueStatus(workflowAction, issue.status);
     const desiredStatus = workflowStatus ?? (reopenRequested && wasClosed ? "todo" : null);
+    const workflowHandoff = await resolveCommentWorkflowHandoff({
+      issue,
+      workflowAction,
+      projectsSvc,
+      agentsSvc,
+    });
+    if (workflowHandoff && workflowHandoff.assigneeAgentId !== issue.assigneeAgentId) {
+      await assertCanRouteCommentWorkflowAssignment(req, issue);
+    }
     let reopened = false;
     let reopenFromStatus: string | null = null;
     let interruptedRunId: string | null = null;
     const updatedWorkProductIds: string[] = [];
     let currentIssue = issue;
 
+    const workflowIssuePatch: Record<string, unknown> = {};
     if (desiredStatus && desiredStatus !== issue.status) {
-      const updatedIssue = await svc.update(id, { status: desiredStatus });
+      workflowIssuePatch.status = desiredStatus;
+    }
+    if (workflowHandoff && workflowHandoff.assigneeAgentId !== issue.assigneeAgentId) {
+      workflowIssuePatch.assigneeAgentId = workflowHandoff.assigneeAgentId;
+      workflowIssuePatch.assigneeUserId = null;
+      workflowIssuePatch.codingWorkflowState = workflowHandoff.codingWorkflowState;
+    }
+
+    if (Object.keys(workflowIssuePatch).length > 0) {
+      const updatedIssue = await svc.update(id, workflowIssuePatch);
       if (!updatedIssue) {
         res.status(404).json({ error: "Issue not found" });
         return;
@@ -1412,6 +1684,14 @@ export function issueRoutes(db: Db, storage: StorageService) {
       reopened = reopenRequested && wasClosed && desiredStatus === "todo";
       reopenFromStatus = reopened ? issue.status : null;
       currentIssue = updatedIssue;
+
+      const previous: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(workflowIssuePatch)) {
+        const previousValue = (issue as Record<string, unknown>)[key];
+        if (!sameValue(previousValue, value)) {
+          previous[key] = previousValue;
+        }
+      }
 
       await logActivity(db, {
         companyId: currentIssue.companyId,
@@ -1423,12 +1703,21 @@ export function issueRoutes(db: Db, storage: StorageService) {
         entityType: "issue",
         entityId: currentIssue.id,
         details: {
-          status: currentIssue.status,
+          ...("status" in workflowIssuePatch ? { status: currentIssue.status } : {}),
+          ...("assigneeAgentId" in workflowIssuePatch
+            ? { assigneeAgentId: currentIssue.assigneeAgentId, assigneeUserId: currentIssue.assigneeUserId }
+            : {}),
           workflowAction,
           source: "comment",
           identifier: currentIssue.identifier,
+          ...(workflowHandoff
+            ? {
+                codingWorkflowHandoff: workflowHandoff.kind,
+                automatedAssigneeChange: true,
+              }
+            : {}),
           ...(reopened ? { reopened: true, reopenedFrom: reopenFromStatus } : {}),
-          _previous: { status: issue.status },
+          _previous: previous,
         },
       });
     }
@@ -1557,10 +1846,11 @@ export function issueRoutes(db: Db, storage: StorageService) {
       const selfComment = actorIsAgent && actor.actorId === assigneeId;
       const skipWake = selfComment || isClosedIssueStatus(currentIssue.status);
       const workflowWakeReason = getCommentWorkflowWakeReason(workflowAction);
+      const handoffWakeReason = workflowHandoff?.wakeReason ?? null;
       const suppressDefaultWake = workflowAction === "request_review" || workflowAction === "approve";
       const shouldWakeForStandardComment = !suppressDefaultWake && !skipWake;
 
-      if (assigneeId && (reopened || workflowWakeReason || shouldWakeForStandardComment)) {
+      if (assigneeId && (reopened || handoffWakeReason || workflowWakeReason || shouldWakeForStandardComment)) {
         if (reopened) {
           wakeups.set(assigneeId, {
             source: "automation",
@@ -1582,6 +1872,32 @@ export function issueRoutes(db: Db, storage: StorageService) {
               source: "issue.comment.reopen",
               wakeReason: "issue_reopened_via_comment",
               reopenedFrom: reopenFromStatus,
+              ...(interruptedRunId ? { interruptedRunId } : {}),
+            },
+          });
+        } else if (handoffWakeReason) {
+          wakeups.set(assigneeId, {
+            source: "automation",
+            triggerDetail: "system",
+            reason: handoffWakeReason,
+            payload: {
+              issueId: currentIssue.id,
+              commentId: comment.id,
+              workflowAction,
+              mutation: "comment",
+              ...(workflowHandoff ? { codingWorkflowHandoff: workflowHandoff.kind } : {}),
+              ...(interruptedRunId ? { interruptedRunId } : {}),
+            },
+            requestedByActorType: actor.actorType,
+            requestedByActorId: actor.actorId,
+            contextSnapshot: {
+              issueId: currentIssue.id,
+              taskId: currentIssue.id,
+              commentId: comment.id,
+              source: `issue.comment.${workflowAction}`,
+              wakeReason: handoffWakeReason,
+              workflowAction,
+              ...(workflowHandoff ? { codingWorkflowHandoff: workflowHandoff.kind } : {}),
               ...(interruptedRunId ? { interruptedRunId } : {}),
             },
           });

@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Project } from "@paperclipai/shared";
+import { AGENT_INSTRUCTION_PRESET_LABELS, type Project } from "@paperclipai/shared";
 import { StatusBadge } from "./StatusBadge";
 import { cn, formatDate } from "../lib/utils";
+import { agentsApi } from "../api/agents";
 import { goalsApi } from "../api/goals";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { projectsApi } from "../api/projects";
@@ -15,8 +16,10 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AlertCircle, Archive, ArchiveRestore, Check, ExternalLink, Github, Loader2, Plus, Trash2, X } from "lucide-react";
+import { AgentIcon } from "./AgentIconPicker";
 import { ChoosePathButton } from "./PathInstructionsModal";
 import { DraftInput } from "./agent-config-primitives";
+import { InlineEntitySelector } from "./InlineEntitySelector";
 import { InlineEditor } from "./InlineEditor";
 
 const PROJECT_STATUSES = [
@@ -48,7 +51,9 @@ export type ProjectConfigFieldKey =
   | "execution_workspace_branch_template"
   | "execution_workspace_worktree_parent_dir"
   | "execution_workspace_provision_command"
-  | "execution_workspace_teardown_command";
+  | "execution_workspace_teardown_command"
+  | "coding_workflow_reviewer"
+  | "coding_workflow_fixer";
 
 function SaveIndicator({ state }: { state: ProjectFieldSaveState }) {
   if (state === "saving") {
@@ -243,6 +248,11 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
     queryKey: queryKeys.instance.experimentalSettings,
     queryFn: () => instanceSettingsApi.getExperimental(),
   });
+  const { data: allAgents } = useQuery({
+    queryKey: queryKeys.agents.list(project.companyId),
+    queryFn: () => agentsApi.list(project.companyId),
+    enabled: !!project.companyId,
+  });
 
   const linkedGoalIds = project.goalIds.length > 0
     ? project.goalIds
@@ -263,6 +273,7 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
   const primaryCodebaseWorkspace = project.primaryWorkspace ?? null;
   const hasAdditionalLegacyWorkspaces = workspaces.some((workspace) => workspace.id !== primaryCodebaseWorkspace?.id);
   const executionWorkspacePolicy = project.executionWorkspacePolicy ?? null;
+  const codingWorkflowPolicy = executionWorkspacePolicy?.codingWorkflowPolicy ?? null;
   const executionWorkspacesEnabled = executionWorkspacePolicy?.enabled === true;
   const isolatedWorkspacesEnabled = experimentalSettings?.enableIsolatedWorkspaces === true;
   const executionWorkspaceDefaultMode =
@@ -273,6 +284,17 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
     branchTemplate: "",
     worktreeParentDir: "",
   };
+  const codingWorkflowAgentOptions = useMemo(
+    () =>
+      (allAgents ?? [])
+        .filter((agent) => agent.status !== "terminated" && agent.status !== "pending_approval")
+        .map((agent) => ({
+          id: agent.id,
+          label: agent.name,
+          searchText: `${agent.role} ${agent.title ?? ""} ${agent.instructionPreset ? AGENT_INSTRUCTION_PRESET_LABELS[agent.instructionPreset] : ""}`.trim(),
+        })),
+    [allAgents],
+  );
 
   const invalidateProject = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(project.id) });
@@ -340,6 +362,14 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
       },
     };
   };
+  const updateCodingWorkflowPolicy = (patch: Record<string, unknown>) =>
+    updateExecutionWorkspacePolicy({
+      codingWorkflowPolicy: {
+        reviewerAgentId: codingWorkflowPolicy?.reviewerAgentId ?? null,
+        fixerAgentId: codingWorkflowPolicy?.fixerAgentId ?? null,
+        ...patch,
+      },
+    });
 
   const isAbsolutePath = (value: string) => value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value);
 
@@ -1103,6 +1133,107 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
             </div>
           </>
         ) : null}
+
+        <Separator className="my-4" />
+
+        <div className="py-1.5 space-y-3">
+          <div className="space-y-0.5">
+            <div className="text-xs text-muted-foreground">Coding Workflow</div>
+            <div className="text-[11px] text-muted-foreground">
+              Route <code>/review</code> and review follow-ups to dedicated coding agents for this project.
+            </div>
+          </div>
+
+          <PropertyRow
+            label={<FieldLabel label="Reviewer" state={fieldState("coding_workflow_reviewer")} />}
+            alignStart
+            valueClassName="pt-0"
+          >
+            <div className="space-y-1.5">
+              <InlineEntitySelector
+                value={codingWorkflowPolicy?.reviewerAgentId ?? ""}
+                options={codingWorkflowAgentOptions}
+                placeholder="Select reviewer"
+                noneLabel="Keep current assignee"
+                searchPlaceholder="Search agents..."
+                emptyMessage="No agents found."
+                onChange={(value) =>
+                  commitField(
+                    "coding_workflow_reviewer",
+                    updateCodingWorkflowPolicy({ reviewerAgentId: value || null })!,
+                  )}
+                className="text-xs h-8"
+                renderTriggerValue={(option) => {
+                  if (!option) return <span className="text-muted-foreground">Keep current assignee</span>;
+                  const agent = (allAgents ?? []).find((candidate) => candidate.id === option.id) ?? null;
+                  return (
+                    <>
+                      {agent ? <AgentIcon icon={agent.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
+                      <span className="truncate">{option.label}</span>
+                    </>
+                  );
+                }}
+                renderOption={(option) => {
+                  const agent = (allAgents ?? []).find((candidate) => candidate.id === option.id) ?? null;
+                  return (
+                    <>
+                      {agent ? <AgentIcon icon={agent.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
+                      <span className="truncate">{option.label}</span>
+                    </>
+                  );
+                }}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                When someone posts <code>/review</code>, Paperclip can hand the issue to this reviewer automatically.
+              </p>
+            </div>
+          </PropertyRow>
+
+          <PropertyRow
+            label={<FieldLabel label="Fixer" state={fieldState("coding_workflow_fixer")} />}
+            alignStart
+            valueClassName="pt-0"
+          >
+            <div className="space-y-1.5">
+              <InlineEntitySelector
+                value={codingWorkflowPolicy?.fixerAgentId ?? ""}
+                options={codingWorkflowAgentOptions}
+                placeholder="Return to builder"
+                noneLabel="Return to last builder"
+                searchPlaceholder="Search agents..."
+                emptyMessage="No agents found."
+                onChange={(value) =>
+                  commitField(
+                    "coding_workflow_fixer",
+                    updateCodingWorkflowPolicy({ fixerAgentId: value || null })!,
+                  )}
+                className="text-xs h-8"
+                renderTriggerValue={(option) => {
+                  if (!option) return <span className="text-muted-foreground">Return to last builder</span>;
+                  const agent = (allAgents ?? []).find((candidate) => candidate.id === option.id) ?? null;
+                  return (
+                    <>
+                      {agent ? <AgentIcon icon={agent.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
+                      <span className="truncate">{option.label}</span>
+                    </>
+                  );
+                }}
+                renderOption={(option) => {
+                  const agent = (allAgents ?? []).find((candidate) => candidate.id === option.id) ?? null;
+                  return (
+                    <>
+                      {agent ? <AgentIcon icon={agent.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
+                      <span className="truncate">{option.label}</span>
+                    </>
+                  );
+                }}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                When review requests changes, Paperclip routes the issue here. Leave it blank to return work to the last builder.
+              </p>
+            </div>
+          </PropertyRow>
+        </div>
 
       </div>
 

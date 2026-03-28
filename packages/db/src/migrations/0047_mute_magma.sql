@@ -1,0 +1,1 @@
+ALTER TABLE "issues" ADD COLUMN "coding_workflow_state" jsonb;

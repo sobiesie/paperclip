@@ -56,6 +56,7 @@ export type {
   ExecutionWorkspaceProviderType,
   ExecutionWorkspaceStatus,
   ExecutionWorkspaceStrategy,
+  ProjectCodingWorkflowPolicy,
   ProjectExecutionWorkspacePolicy,
   ProjectExecutionWorkspaceDefaultMode,
   IssueExecutionWorkspaceSettings,
@@ -75,6 +76,7 @@ export type {
 export type {
   Issue,
   IssueAssigneeAdapterOverrides,
+  IssueCodingWorkflowState,
   IssueComment,
   IssueDocument,
   IssueDocumentSummary,

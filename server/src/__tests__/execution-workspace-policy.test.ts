@@ -123,6 +123,10 @@ describe("execution workspace policy helpers", () => {
           provisionCommand: "bash ./scripts/provision-worktree.sh",
           teardownCommand: "bash ./scripts/teardown-worktree.sh",
         },
+        codingWorkflowPolicy: {
+          reviewerAgentId: "11111111-1111-4111-8111-111111111111",
+          fixerAgentId: "22222222-2222-4222-8222-222222222222",
+        },
       }),
     ).toEqual({
       enabled: true,
@@ -132,6 +136,10 @@ describe("execution workspace policy helpers", () => {
         worktreeParentDir: ".paperclip/worktrees",
         provisionCommand: "bash ./scripts/provision-worktree.sh",
         teardownCommand: "bash ./scripts/teardown-worktree.sh",
+      },
+      codingWorkflowPolicy: {
+        reviewerAgentId: "11111111-1111-4111-8111-111111111111",
+        fixerAgentId: "22222222-2222-4222-8222-222222222222",
       },
     });
     expect(

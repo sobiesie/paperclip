@@ -2,6 +2,7 @@ import type {
   ExecutionWorkspaceMode,
   ExecutionWorkspaceStrategy,
   IssueExecutionWorkspaceSettings,
+  ProjectCodingWorkflowPolicy,
   ProjectExecutionWorkspaceDefaultMode,
   ProjectExecutionWorkspacePolicy,
 } from "@paperclipai/shared";
@@ -30,11 +31,24 @@ function parseExecutionWorkspaceStrategy(raw: unknown): ExecutionWorkspaceStrate
   };
 }
 
+function parseProjectCodingWorkflowPolicy(raw: unknown): ProjectCodingWorkflowPolicy | null {
+  const parsed = parseObject(raw);
+  if (Object.keys(parsed).length === 0) return null;
+  const reviewerAgentId = typeof parsed.reviewerAgentId === "string" ? parsed.reviewerAgentId : undefined;
+  const fixerAgentId = typeof parsed.fixerAgentId === "string" ? parsed.fixerAgentId : undefined;
+  if (!reviewerAgentId && !fixerAgentId) return null;
+  return {
+    ...(reviewerAgentId ? { reviewerAgentId } : {}),
+    ...(fixerAgentId ? { fixerAgentId } : {}),
+  };
+}
+
 export function parseProjectExecutionWorkspacePolicy(raw: unknown): ProjectExecutionWorkspacePolicy | null {
   const parsed = parseObject(raw);
   if (Object.keys(parsed).length === 0) return null;
   const enabled = typeof parsed.enabled === "boolean" ? parsed.enabled : false;
   const workspaceStrategy = parseExecutionWorkspaceStrategy(parsed.workspaceStrategy);
+  const codingWorkflowPolicy = parseProjectCodingWorkflowPolicy(parsed.codingWorkflowPolicy);
   const defaultMode = asString(parsed.defaultMode, "");
   const defaultProjectWorkspaceId =
     typeof parsed.defaultProjectWorkspaceId === "string" ? parsed.defaultProjectWorkspaceId : undefined;
@@ -74,6 +88,7 @@ export function parseProjectExecutionWorkspacePolicy(raw: unknown): ProjectExecu
     ...(parsed.cleanupPolicy && typeof parsed.cleanupPolicy === "object" && !Array.isArray(parsed.cleanupPolicy)
       ? { cleanupPolicy: { ...(parsed.cleanupPolicy as Record<string, unknown>) } }
       : {}),
+    ...(codingWorkflowPolicy ? { codingWorkflowPolicy } : {}),
   };
 }
 

@@ -19,6 +19,7 @@ import { useProjectOrder } from "../hooks/useProjectOrder";
 import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
 import { InlineEditor } from "../components/InlineEditor";
 import { CommentThread } from "../components/CommentThread";
+import { IssueCodingWorkflowCard } from "../components/IssueCodingWorkflowCard";
 import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssueProperties } from "../components/IssueProperties";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
@@ -55,7 +56,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type { ActivityEvent } from "@paperclipai/shared";
-import type { Agent, IssueAttachment } from "@paperclipai/shared";
+import type { Agent, IssueAttachment, IssueCommentWorkflowAction } from "@paperclipai/shared";
 
 type CommentReassignment = {
   assigneeAgentId: string | null;
@@ -87,6 +88,13 @@ const ACTION_LABELS: Record<string, string> = {
   "approval.created": "requested approval",
   "approval.approved": "approved",
   "approval.rejected": "rejected",
+};
+
+const QUICK_WORKFLOW_COMMENT_BODIES: Record<IssueCommentWorkflowAction, string> = {
+  continue: "/continue",
+  request_review: "/review",
+  changes_requested: "/fix",
+  approve: "/approve",
 };
 
 function humanizeValue(value: unknown): string {
@@ -216,6 +224,7 @@ export function IssueDetail() {
   });
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
+  const [pendingWorkflowAction, setPendingWorkflowAction] = useState<IssueCommentWorkflowAction | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
 
@@ -623,6 +632,7 @@ export function IssueDetail() {
   if (isLoading) return <p className="text-sm text-muted-foreground">Loading...</p>;
   if (error) return <p className="text-sm text-destructive">{error.message}</p>;
   if (!issue) return null;
+  const issueProject = issue.project ?? orderedProjects.find((project) => project.id === issue.projectId) ?? null;
 
   // Ancestors are returned oldest-first from the server (root at end, immediate parent at start)
   const ancestors = issue.ancestors ?? [];
@@ -658,6 +668,17 @@ export function IssueDetail() {
   const isImageAttachment = (attachment: IssueAttachment) => attachment.contentType.startsWith("image/");
   const attachmentList = attachments ?? [];
   const hasAttachments = attachmentList.length > 0;
+  const handleQuickWorkflowAction = async (workflowAction: IssueCommentWorkflowAction) => {
+    setPendingWorkflowAction(workflowAction);
+    try {
+      await addComment.mutateAsync({
+        body: QUICK_WORKFLOW_COMMENT_BODIES[workflowAction],
+        workflowAction,
+      });
+    } finally {
+      setPendingWorkflowAction(null);
+    }
+  };
   const attachmentUploadButton = (
     <>
       <input
@@ -997,9 +1018,17 @@ export function IssueDetail() {
         </div>
       ) : null}
 
+      <IssueCodingWorkflowCard
+        issue={issue}
+        project={issueProject}
+        agentMap={agentMap}
+        onWorkflowAction={handleQuickWorkflowAction}
+        pendingWorkflowAction={pendingWorkflowAction}
+      />
+
       <IssueWorkspaceCard
         issue={issue}
-        project={orderedProjects.find((p) => p.id === issue.projectId) ?? null}
+        project={issueProject}
         onUpdate={(data) => updateIssue.mutate(data)}
       />
 

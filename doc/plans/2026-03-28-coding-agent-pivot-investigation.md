@@ -10,6 +10,10 @@ The first implementation slices are now underway in the product:
 - issue comments support explicit coding workflow actions and slash-command inference for `continue`, `review`, `fix`, and `approve`
 - issue comments persist their workflow action so review handoffs are durable in the timeline
 - new agent creation now has coding-oriented presets for builder, reviewer, and fixer agents with coding-specific bundled instructions
+- projects can now declare reviewer and fixer routing so `review` can hand work to a reviewer agent and `fix` can route changes back to a builder or dedicated fixer
+- issue detail now shows a coding workflow card with builder / reviewer / fixer visibility, linked outputs, and one-click workflow transitions
+- issue rows and inbox surfaces now badge coding workflow state so review and fix loops are scannable at a glance
+- pull request work-product review-state changes now feed the same coding workflow loop, so external PR sync can move issues into review, request fixes, or mark approval without relying on a manual comment first
 
 That means the repo now has a real foundation for the loop this investigation described:
 

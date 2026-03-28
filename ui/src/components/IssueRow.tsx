@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import type { Issue } from "@paperclipai/shared";
 import { Link } from "@/lib/router";
 import { X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { getIssueCodingWorkflowSummary } from "../lib/coding-workflow";
 import { cn } from "../lib/utils";
 import { StatusIcon } from "./StatusIcon";
 
@@ -42,6 +44,7 @@ export function IssueRow({
   const identifier = issue.identifier ?? issue.id.slice(0, 8);
   const showUnreadSlot = unreadState !== null;
   const showUnreadDot = unreadState === "visible" || unreadState === "fading";
+  const workflowSummary = getIssueCodingWorkflowSummary(issue);
 
   return (
     <Link
@@ -66,19 +69,34 @@ export function IssueRow({
           {desktopMetaLeading ?? (
             <>
               <span className="hidden shrink-0 sm:inline-flex">
-                <StatusIcon status={issue.status} />
-              </span>
-              <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                {identifier}
-              </span>
-            </>
-          )}
+                      <StatusIcon status={issue.status} />
+                    </span>
+                    <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                      {identifier}
+                    </span>
+                    {workflowSummary ? (
+                      <Badge variant={workflowSummary.badgeVariant} className="px-1.5 py-0 text-[10px]">
+                        {workflowSummary.shortLabel}
+                      </Badge>
+                    ) : null}
+                  </>
+                )}
           {mobileMeta ? (
             <>
               <span className="text-xs text-muted-foreground sm:hidden" aria-hidden="true">
                 &middot;
               </span>
               <span className="text-xs text-muted-foreground sm:hidden">{mobileMeta}</span>
+            </>
+          ) : null}
+          {workflowSummary ? (
+            <>
+              <span className="text-xs text-muted-foreground sm:hidden" aria-hidden="true">
+                &middot;
+              </span>
+              <span className="text-xs text-muted-foreground sm:hidden">
+                {workflowSummary.shortLabel}
+              </span>
             </>
           ) : null}
         </span>

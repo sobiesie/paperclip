@@ -56,6 +56,11 @@ export interface IssueAssigneeAdapterOverrides {
   useProjectWorkspace?: boolean;
 }
 
+export interface IssueCodingWorkflowState {
+  builderAgentId: string | null;
+  reviewerAgentId: string | null;
+}
+
 export type DocumentFormat = "markdown";
 
 export interface IssueDocumentSummary {
@@ -130,6 +135,7 @@ export interface Issue {
   executionWorkspaceId: string | null;
   executionWorkspacePreference: string | null;
   executionWorkspaceSettings: IssueExecutionWorkspaceSettings | null;
+  codingWorkflowState: IssueCodingWorkflowState | null;
   startedAt: Date | null;
   completedAt: Date | null;
   cancelledAt: Date | null;

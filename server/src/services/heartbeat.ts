@@ -545,7 +545,7 @@ export function shouldResetTaskSessionForWake(
   if (contextSnapshot?.forceFreshSession === true) return true;
 
   const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
-  if (wakeReason === "issue_assigned") return true;
+  if (wakeReason === "issue_assigned" || wakeReason === "issue_review_requested") return true;
   return false;
 }
 
@@ -562,7 +562,9 @@ function describeSessionResetReason(
   if (contextSnapshot?.forceFreshSession === true) return "forceFreshSession was requested";
 
   const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
-  if (wakeReason === "issue_assigned") return "wake reason is issue_assigned";
+  if (wakeReason === "issue_assigned" || wakeReason === "issue_review_requested") {
+    return `wake reason is ${wakeReason}`;
+  }
   return null;
 }
 

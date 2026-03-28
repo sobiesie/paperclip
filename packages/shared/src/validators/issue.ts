@@ -27,6 +27,13 @@ export const issueAssigneeAdapterOverridesSchema = z
   })
   .strict();
 
+export const issueCodingWorkflowStateSchema = z
+  .object({
+    builderAgentId: z.string().uuid().nullable(),
+    reviewerAgentId: z.string().uuid().nullable(),
+  })
+  .strict();
+
 export const createIssueSchema = z.object({
   projectId: z.string().uuid().optional().nullable(),
   projectWorkspaceId: z.string().uuid().optional().nullable(),
@@ -71,6 +78,7 @@ export const updateIssueSchema = createIssueSchema.partial().extend({
 
 export type UpdateIssue = z.infer<typeof updateIssueSchema>;
 export type IssueExecutionWorkspaceSettings = z.infer<typeof issueExecutionWorkspaceSettingsSchema>;
+export type IssueCodingWorkflowState = z.infer<typeof issueCodingWorkflowStateSchema>;
 
 export const checkoutIssueSchema = z.object({
   agentId: z.string().uuid(),

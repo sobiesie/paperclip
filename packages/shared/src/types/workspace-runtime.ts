@@ -40,6 +40,11 @@ export interface ExecutionWorkspaceStrategy {
   teardownCommand?: string | null;
 }
 
+export interface ProjectCodingWorkflowPolicy {
+  reviewerAgentId?: string | null;
+  fixerAgentId?: string | null;
+}
+
 export interface ProjectExecutionWorkspacePolicy {
   enabled: boolean;
   defaultMode?: ProjectExecutionWorkspaceDefaultMode;
@@ -51,6 +56,7 @@ export interface ProjectExecutionWorkspacePolicy {
   pullRequestPolicy?: Record<string, unknown> | null;
   runtimePolicy?: Record<string, unknown> | null;
   cleanupPolicy?: Record<string, unknown> | null;
+  codingWorkflowPolicy?: ProjectCodingWorkflowPolicy | null;
 }
 
 export interface IssueExecutionWorkspaceSettings {
