@@ -80,7 +80,7 @@ Worker:
 - entities
 - projects and project workspaces
 - companies
-- issues and comments
+- issues, work products, and comments
 - agents and agent sessions
 - goals
 - data/actions

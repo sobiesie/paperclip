@@ -119,7 +119,7 @@ Subscribe in `setup` with `ctx.events.on(name, handler)` or `ctx.events.on(name,
 | `company.created`, `company.updated` | company |
 | `project.created`, `project.updated` | project |
 | `project.workspace_created`, `project.workspace_updated`, `project.workspace_deleted` | project_workspace |
-| `issue.created`, `issue.updated`, `issue.comment.created` | issue |
+| `issue.created`, `issue.updated`, `issue.work_product_created`, `issue.work_product_updated`, `issue.work_product_deleted`, `issue.comment.created` | issue |
 | `agent.created`, `agent.updated`, `agent.status_changed` | agent |
 | `agent.run.started`, `agent.run.finished`, `agent.run.failed`, `agent.run.cancelled` | run |
 | `goal.created`, `goal.updated` | goal |

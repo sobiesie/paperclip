@@ -771,6 +771,9 @@ Minimum event set:
 - `project.workspace_deleted`
 - `issue.created`
 - `issue.updated`
+- `issue.work_product_created`
+- `issue.work_product_updated`
+- `issue.work_product_deleted`
 - `issue.comment.created`
 - `agent.created`
 - `agent.updated`
