@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
-import type { Agent, IssueComment, IssueCommentWorkflowAction } from "@paperclipai/shared";
+import type { ActivityEvent, Agent, IssueCommentWorkflowAction, IssueWorkProduct } from "@paperclipai/shared";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -13,19 +13,13 @@ import { StatusBadge } from "./StatusBadge";
 import { AgentIcon } from "./AgentIconPicker";
 import { formatDateTime } from "../lib/utils";
 import { PluginSlotOutlet } from "@/plugins/slots";
-
-interface CommentWithRunMeta extends IssueComment {
-  runId?: string | null;
-  runAgentId?: string | null;
-}
-
-interface LinkedRunItem {
-  runId: string;
-  status: string;
-  agentId: string;
-  createdAt: Date | string;
-  startedAt: Date | string | null;
-}
+import {
+  buildIssueTimeline,
+  describeIssueTimelineActivity,
+  type CommentTimelineItem,
+  type IssueTimelineItem,
+  type LinkedRunTimelineItem,
+} from "../lib/issue-timeline";
 
 interface CommentReassignment {
   assigneeAgentId: string | null;
@@ -76,8 +70,10 @@ function defaultCommentActionMode(status?: string): CommentActionMode {
 }
 
 interface CommentThreadProps {
-  comments: CommentWithRunMeta[];
-  linkedRuns?: LinkedRunItem[];
+  comments: CommentTimelineItem[];
+  linkedRuns?: LinkedRunTimelineItem[];
+  activity?: ActivityEvent[];
+  workProducts?: IssueWorkProduct[];
   companyId?: string | null;
   projectId?: string | null;
   onAdd: (input: {
@@ -165,29 +161,74 @@ function CopyMarkdownButton({ text }: { text: string }) {
 }
 
 type TimelineItem =
-  | { kind: "comment"; id: string; createdAtMs: number; comment: CommentWithRunMeta }
-  | { kind: "run"; id: string; createdAtMs: number; run: LinkedRunItem };
+  IssueTimelineItem;
 
 const TimelineList = memo(function TimelineList({
   timeline,
+  workProducts,
   agentMap,
   companyId,
   projectId,
   highlightCommentId,
 }: {
   timeline: TimelineItem[];
+  workProducts: IssueWorkProduct[];
   agentMap?: Map<string, Agent>;
   companyId?: string | null;
   projectId?: string | null;
   highlightCommentId?: string | null;
 }) {
   if (timeline.length === 0) {
-    return <p className="text-sm text-muted-foreground">No comments or runs yet.</p>;
+    return <p className="text-sm text-muted-foreground">No timeline events yet.</p>;
   }
 
   return (
     <div className="space-y-3">
       {timeline.map((item) => {
+        if (item.kind === "activity") {
+          const event = item.event;
+          const summary = describeIssueTimelineActivity(event, workProducts);
+          const actorName =
+            event.actorType === "system"
+              ? "Automation"
+              : event.agentId
+                ? (agentMap?.get(event.agentId)?.name ?? event.agentId.slice(0, 8))
+                : "You";
+
+          return (
+            <div key={`activity:${event.id}`} className="border border-border bg-muted/20 p-3 overflow-hidden min-w-0 rounded-sm">
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <Identity name={actorName} size="sm" />
+                <span className="text-xs text-muted-foreground">
+                  {formatDateTime(event.createdAt)}
+                </span>
+              </div>
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={summary.badge === "Workflow" ? "secondary" : "outline"} className="px-1.5 py-0 text-[10px]">
+                    {summary.badge}
+                  </Badge>
+                  <span className="text-sm">{summary.title}</span>
+                </div>
+                {summary.workProduct ? (
+                  summary.workProduct.url ? (
+                    <a
+                      href={summary.workProduct.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex min-w-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:underline"
+                    >
+                      <span className="truncate">{summary.workProduct.title}</span>
+                    </a>
+                  ) : (
+                    <div className="text-xs text-muted-foreground truncate">{summary.workProduct.title}</div>
+                  )
+                ) : null}
+              </div>
+            </div>
+          );
+        }
+
         if (item.kind === "run") {
           const run = item.run;
           return (
@@ -317,6 +358,8 @@ const TimelineList = memo(function TimelineList({
 export function CommentThread({
   comments,
   linkedRuns = [],
+  activity = [],
+  workProducts = [],
   companyId,
   projectId,
   onAdd,
@@ -348,24 +391,12 @@ export function CommentThread({
   const hasScrolledRef = useRef(false);
 
   const timeline = useMemo<TimelineItem[]>(() => {
-    const commentItems: TimelineItem[] = comments.map((comment) => ({
-      kind: "comment",
-      id: comment.id,
-      createdAtMs: new Date(comment.createdAt).getTime(),
-      comment,
-    }));
-    const runItems: TimelineItem[] = linkedRuns.map((run) => ({
-      kind: "run",
-      id: run.runId,
-      createdAtMs: new Date(run.startedAt ?? run.createdAt).getTime(),
-      run,
-    }));
-    return [...commentItems, ...runItems].sort((a, b) => {
-      if (a.createdAtMs !== b.createdAtMs) return a.createdAtMs - b.createdAtMs;
-      if (a.kind === b.kind) return a.id.localeCompare(b.id);
-      return a.kind === "comment" ? -1 : 1;
+    return buildIssueTimeline({
+      comments,
+      linkedRuns,
+      activity,
     });
-  }, [comments, linkedRuns]);
+  }, [activity, comments, linkedRuns]);
 
   // Build mention options from agent map (exclude terminated agents)
   const mentions = useMemo<MentionOption[]>(() => {
@@ -476,10 +507,11 @@ export function CommentThread({
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-semibold">Comments &amp; Runs ({timeline.length})</h3>
+      <h3 className="text-sm font-semibold">Timeline ({timeline.length})</h3>
 
       <TimelineList
         timeline={timeline}
+        workProducts={workProducts}
         agentMap={agentMap}
         companyId={companyId}
         projectId={projectId}

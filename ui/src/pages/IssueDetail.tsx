@@ -1029,6 +1029,7 @@ export function IssueDetail() {
       <IssueWorkspaceCard
         issue={issue}
         project={issueProject}
+        workProducts={issue.workProducts ?? []}
         onUpdate={(data) => updateIssue.mutate(data)}
       />
 
@@ -1059,6 +1060,8 @@ export function IssueDetail() {
           <CommentThread
             comments={commentsWithRunMeta}
             linkedRuns={timelineRuns}
+            activity={activity}
+            workProducts={issue.workProducts ?? []}
             companyId={issue.companyId}
             projectId={issue.projectId}
             issueStatus={issue.status}

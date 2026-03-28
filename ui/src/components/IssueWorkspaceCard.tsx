@@ -1,14 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "@/lib/router";
-import type { Issue, ExecutionWorkspace } from "@paperclipai/shared";
+import type { ExecutionWorkspace, Issue, IssueWorkProduct, Project } from "@paperclipai/shared";
 import { useQuery } from "@tanstack/react-query";
 import { executionWorkspacesApi } from "../api/execution-workspaces";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { useCompany } from "../context/CompanyContext";
+import { formatIssueWorkProductTypeLabel } from "../lib/coding-workflow";
+import {
+  getExecutionWorkspaceLocation,
+  getProjectCodebaseCheckout,
+  getProjectCodebaseRef,
+  selectIssueOperationalWorkProducts,
+} from "../lib/codebase-visibility";
 import { queryKeys } from "../lib/queryKeys";
 import { cn } from "../lib/utils";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Check, Copy, GitBranch, FolderOpen, Pencil, X } from "lucide-react";
+import { Check, Copy, ExternalLink, GitBranch, FolderOpen, Globe, Pencil, X } from "lucide-react";
+import { StatusBadge } from "./StatusBadge";
 
 /* -------------------------------------------------------------------------- */
 /*  Utility helpers (mirrored from IssueProperties for self-containment)      */
@@ -49,7 +58,7 @@ function defaultExecutionWorkspaceModeForProject(project: { executionWorkspacePo
 /* -------------------------------------------------------------------------- */
 
 function BreakablePath({ text }: { text: string }) {
-  const parts: React.ReactNode[] = [];
+  const parts: ReactNode[] = [];
   const segments = text.split(/(?<=[\/-])/);
   for (let i = 0; i < segments.length; i++) {
     if (i > 0) parts.push(<wbr key={i} />);
@@ -134,11 +143,26 @@ function statusBadge(status: string) {
 
 interface IssueWorkspaceCardProps {
   issue: Issue;
-  project: { id: string; executionWorkspacePolicy?: { enabled?: boolean; defaultMode?: string | null; defaultProjectWorkspaceId?: string | null } | null; workspaces?: Array<{ id: string; isPrimary: boolean }> } | null;
+  project: Pick<Project, "id" | "codebase" | "executionWorkspacePolicy" | "primaryWorkspace" | "workspaces"> | null;
+  workProducts?: IssueWorkProduct[];
   onUpdate: (data: Record<string, unknown>) => void;
 }
 
-export function IssueWorkspaceCard({ issue, project, onUpdate }: IssueWorkspaceCardProps) {
+function workProductIcon(type: IssueWorkProduct["type"]) {
+  return type === "preview_url" || type === "runtime_service" ? Globe : GitBranch;
+}
+
+function isSafeExternalUrl(value: string | null | undefined) {
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+export function IssueWorkspaceCard({ issue, project, workProducts, onUpdate }: IssueWorkspaceCardProps) {
   const { selectedCompanyId } = useCompany();
   const companyId = issue.companyId ?? selectedCompanyId;
   const [editing, setEditing] = useState(false);
@@ -152,6 +176,10 @@ export function IssueWorkspaceCard({ issue, project, onUpdate }: IssueWorkspaceC
     && Boolean(project?.executionWorkspacePolicy?.enabled);
 
   const workspace = issue.currentExecutionWorkspace as ExecutionWorkspace | null | undefined;
+  const workspaceLocation = getExecutionWorkspaceLocation(workspace);
+  const projectCheckout = getProjectCodebaseCheckout(project);
+  const projectRef = getProjectCodebaseRef(project);
+  const operationalWorkProducts = selectIssueOperationalWorkProducts(workProducts ?? issue.workProducts, 4);
 
   const { data: reusableExecutionWorkspaces } = useQuery({
     queryKey: queryKeys.executionWorkspaces.list(companyId!, {
@@ -287,22 +315,22 @@ export function IssueWorkspaceCard({ issue, project, onUpdate }: IssueWorkspaceC
       {/* Read-only info */}
       {!editing && (
         <div className="space-y-1.5 text-xs">
-          {workspace?.branchName && (
+          {(workspace?.branchName || (!workspace && projectRef)) && (
             <div className="flex items-center gap-1.5">
               <GitBranch className="h-3 w-3 text-muted-foreground shrink-0" />
-              <CopyableInline value={workspace.branchName} mono />
+              <CopyableInline value={workspace?.branchName ?? projectRef ?? ""} mono />
             </div>
           )}
-          {workspace?.cwd && (
+          {(workspaceLocation || (!workspace && projectCheckout)) && (
             <div className="flex items-center gap-1.5">
               <FolderOpen className="h-3 w-3 text-muted-foreground shrink-0" />
-              <CopyableInline value={workspace.cwd} mono />
+              <CopyableInline value={workspaceLocation ?? projectCheckout ?? ""} mono />
             </div>
           )}
-          {workspace?.repoUrl && (
+          {(workspace?.repoUrl || (!workspace && project?.codebase.repoUrl)) && (
             <div className="flex items-center gap-1.5 text-muted-foreground">
               <span className="text-[11px]">Repo:</span>
-              <CopyableInline value={workspace.repoUrl} mono />
+              <CopyableInline value={workspace?.repoUrl ?? project?.codebase.repoUrl ?? ""} mono />
             </div>
           )}
           {!workspace && (
@@ -314,6 +342,11 @@ export function IssueWorkspaceCard({ issue, project, onUpdate }: IssueWorkspaceC
                   : "This issue will use the project default workspace configuration when it runs."}
             </div>
           )}
+          {!workspace && projectCheckout ? (
+            <div className="text-muted-foreground">
+              Planned checkout resolves against <span className="font-mono">{projectCheckout}</span>.
+            </div>
+          ) : null}
           {currentSelection === "reuse_existing" && selectedReusableExecutionWorkspace && (
             <div className="text-muted-foreground" style={{ overflowWrap: "anywhere" }}>
               Reusing:{" "}
@@ -325,6 +358,60 @@ export function IssueWorkspaceCard({ issue, project, onUpdate }: IssueWorkspaceC
               </Link>
             </div>
           )}
+          {operationalWorkProducts.length > 0 ? (
+            <div className="space-y-1.5 pt-1.5">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                Operational links
+              </div>
+              {operationalWorkProducts.map((workProduct) => {
+                const Icon = workProductIcon(workProduct.type);
+                const reviewStateVisible = workProduct.reviewState !== "none" && workProduct.reviewState !== workProduct.status;
+                return (
+                  <div
+                    key={workProduct.id}
+                    className="rounded-md border border-border/60 px-2.5 py-2"
+                  >
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                            {formatIssueWorkProductTypeLabel(workProduct.type)}
+                          </span>
+                        </div>
+                        {workProduct.url && isSafeExternalUrl(workProduct.url) ? (
+                          <a
+                            href={workProduct.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex min-w-0 items-center gap-1 text-sm font-medium hover:underline"
+                          >
+                            <span className="truncate">{workProduct.title}</span>
+                            <ExternalLink className="h-3 w-3 shrink-0" />
+                          </a>
+                        ) : (
+                          <div className="min-w-0 text-sm font-medium">
+                            <span className="truncate">{workProduct.title}</span>
+                          </div>
+                        )}
+                        {workProduct.summary ? (
+                          <div className="text-[11px] text-muted-foreground">{workProduct.summary}</div>
+                        ) : null}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <StatusBadge status={workProduct.status} />
+                        {reviewStateVisible ? (
+                          <Badge variant="outline" className="px-2 py-0.5 text-[10px]">
+                            {workProduct.reviewState.replace(/_/g, " ")}
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
           {workspace && (
             <div className="pt-0.5">
               <Link

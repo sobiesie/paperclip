@@ -20,6 +20,7 @@ import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
 import { IssuesList } from "../components/IssuesList";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { PageTabBar } from "../components/PageTabBar";
+import { ProjectCodebaseOperationsCard } from "../components/ProjectCodebaseOperationsCard";
 import { projectRouteRef, cn } from "../lib/utils";
 import { Tabs } from "@/components/ui/tabs";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
@@ -575,14 +576,17 @@ export function ProjectDetail() {
       </Tabs>
 
       {activeTab === "overview" && (
-        <OverviewContent
-          project={project}
-          onUpdate={(data) => updateProject.mutate(data)}
-          imageUploadHandler={async (file) => {
-            const asset = await uploadImage.mutateAsync(file);
-            return asset.contentPath;
-          }}
-        />
+        <div className="space-y-6">
+          <ProjectCodebaseOperationsCard project={project} />
+          <OverviewContent
+            project={project}
+            onUpdate={(data) => updateProject.mutate(data)}
+            imageUploadHandler={async (file) => {
+              const asset = await uploadImage.mutateAsync(file);
+              return asset.contentPath;
+            }}
+          />
+        </div>
       )}
 
       {activeTab === "list" && project?.id && resolvedCompanyId && (

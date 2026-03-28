@@ -19,6 +19,10 @@ The first implementation slices are now underway in the product:
 - onboarding can now start in either company mode or codebase mode, with codebase onboarding defaulting to a coding-builder setup and coding-first launch copy
 - new issue creation now includes coding starter templates for refactor, review, fix-review-findings, and parallel implementation flows
 - projects can now control whether pull-request ready states auto-start review and whether reviewer handoffs should force a fresh isolated workspace before fixes route back to the builder checkout
+- issue detail timelines now merge comments, runs, linked work-product activity, and automated review/fix handoffs into one coding-centric history
+- the UI now infers when a workspace is codebase-driven from connected project workspaces and coding presets, and uses that to reduce CEO/company framing in agent creation, dashboard copy, agent list defaults, and top-level empty states
+- companies now persist an explicit operating mode (`company` or `codebase`), onboarding writes it at creation time, portability preserves it, and settings can switch it so the shell can rely on saved workspace framing instead of heuristics alone
+- issue detail and project overview now surface dedicated codebase-operations cards so current checkouts, repo context, previews/runtime services, review targets, and recent execution workspaces are visible without digging through comments or run logs
 
 That means the repo now has a real foundation for the loop this investigation described:
 
@@ -313,6 +317,10 @@ And Paperclip should not try to own:
 
 ### P2: Codebase operations visibility
 
+- now shipped:
+  - project overview exposes repo, default ref, primary checkout, runtime services, and recent execution workspaces
+  - issue detail exposes checkout path/ref context and direct PR / preview / runtime links from the workspace surface
+  - issue detail timelines already merge comments, runs, work-product changes, and review/fix handoffs into one coding-centric history
 - Make repo health and workspace state primary:
   - branch
   - worktree path
@@ -320,12 +328,6 @@ And Paperclip should not try to own:
   - preview URL
   - PR URL
   - CI status
-- Add issue-centric coding timeline:
-  - task comment
-  - run
-  - commit
-  - PR
-  - review
   - fix follow-up
 
 ### P3: Deeper product cleanup
