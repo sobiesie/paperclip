@@ -121,6 +121,7 @@ describe("company portability", () => {
       id: "company-1",
       name: "Paperclip",
       description: null,
+      operatingMode: "company",
       issuePrefix: "PAP",
       brandColor: "#5c5fff",
       logoAssetId: null,
@@ -438,6 +439,34 @@ describe("company portability", () => {
     expect(extension).not.toContain("budgetMonthlyCents: 0");
     expect(exported.warnings).toContain("Agent claudecoder command /Users/dotta/.local/bin/claude was omitted from export because it is system-dependent.");
     expect(exported.warnings).toContain("Agent claudecoder PATH override was omitted from export because it is system-dependent.");
+  });
+
+  it("exports the operating mode when a company is codebase-driven", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    companySvc.getById.mockResolvedValue({
+      id: "company-1",
+      name: "Paperclip",
+      description: null,
+      operatingMode: "codebase",
+      issuePrefix: "PAP",
+      brandColor: "#5c5fff",
+      logoAssetId: null,
+      logoUrl: null,
+      requireBoardApprovalForNewAgents: true,
+    });
+
+    const exported = await portability.exportBundle("company-1", {
+      include: {
+        company: true,
+        agents: false,
+        projects: false,
+        issues: false,
+      },
+    });
+
+    expect(exported.manifest.company?.operatingMode).toBe("codebase");
+    expect(asTextFile(exported.files[".paperclip.yaml"])).toContain('operatingMode: "codebase"');
   });
 
   it("exports default sidebar order into the Paperclip extension and manifest", async () => {
@@ -1629,6 +1658,7 @@ describe("company portability", () => {
     expect(companySvc.create).toHaveBeenCalledWith(expect.objectContaining({
       name: "Imported Paperclip",
       description: "Portable company package",
+      operatingMode: "company",
     }));
     expect(agentSvc.create).toHaveBeenCalledWith("company-imported", expect.objectContaining({
       name: "ClaudeCoder",

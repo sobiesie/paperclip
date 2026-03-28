@@ -25,6 +25,7 @@ import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRa
 import { PageSkeleton } from "../components/PageSkeleton";
 import type { Agent, Issue } from "@paperclipai/shared";
 import { PluginSlotOutlet } from "@/plugins/slots";
+import { resolveCompanyOperatingMode } from "../lib/company-operating-mode";
 
 function getRecentIssues(issues: Issue[]): Issue[] {
   return [...issues]
@@ -32,7 +33,7 @@ function getRecentIssues(issues: Issue[]): Issue[] {
 }
 
 export function Dashboard() {
-  const { selectedCompanyId, companies } = useCompany();
+  const { selectedCompany, selectedCompanyId, companies } = useCompany();
   const { openOnboarding } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
   const [animatedActivityIds, setAnimatedActivityIds] = useState<Set<string>>(new Set());
@@ -82,6 +83,11 @@ export function Dashboard() {
 
   const recentIssues = issues ? getRecentIssues(issues) : [];
   const recentActivity = useMemo(() => (activity ?? []).slice(0, 10), [activity]);
+  const operatingMode = resolveCompanyOperatingMode({
+    company: selectedCompany,
+    agents,
+    projects,
+  });
 
   useEffect(() => {
     for (const timer of activityAnimationTimersRef.current) {
@@ -168,14 +174,14 @@ export function Dashboard() {
       return (
         <EmptyState
           icon={LayoutDashboard}
-          message="Welcome to Paperclip. Set up your first company and agent to get started."
+          message="Welcome to Paperclip. Set up your first workspace and agent to get started."
           action="Get Started"
           onAction={openOnboarding}
         />
       );
     }
     return (
-      <EmptyState icon={LayoutDashboard} message="Create or select a company to view the dashboard." />
+      <EmptyState icon={LayoutDashboard} message="Create or select a workspace to view the dashboard." />
     );
   }
 
@@ -194,7 +200,7 @@ export function Dashboard() {
           <div className="flex items-center gap-2.5">
             <Bot className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
             <p className="text-sm text-amber-900 dark:text-amber-100">
-              You have no agents.
+              {operatingMode === "codebase" ? "You have no coding agents yet." : "You have no agents."}
             </p>
           </div>
           <button

@@ -224,7 +224,7 @@ export function companyRoutes(db: Db, storage?: StorageService) {
       action: "company.created",
       entityType: "company",
       entityId: company.id,
-      details: { name: company.name },
+      details: { name: company.name, operatingMode: company.operatingMode },
     });
     if (company.budgetMonthlyCents > 0) {
       await budgets.upsertPolicy(

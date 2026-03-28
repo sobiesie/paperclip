@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from "@/lib/router";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { agentsApi } from "../api/agents";
+import { projectsApi } from "../api/projects";
 import { companySkillsApi } from "../api/companySkills";
 import { queryKeys } from "../lib/queryKeys";
 import { AGENT_ROLES, type AgentInstructionPreset } from "@paperclipai/shared";
@@ -33,6 +34,7 @@ import {
   getAgentInstructionPresetOption,
   isAgentInstructionPreset,
 } from "../lib/agent-instruction-presets";
+import { resolveCompanyOperatingMode } from "../lib/company-operating-mode";
 
 const SUPPORTED_ADVANCED_ADAPTER_TYPES = new Set<CreateConfigValues["adapterType"]>([
   "claude_local",
@@ -64,7 +66,7 @@ function createValuesForAdapterType(
 }
 
 export function NewAgent() {
-  const { selectedCompanyId } = useCompany();
+  const { selectedCompany, selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -90,6 +92,12 @@ export function NewAgent() {
     enabled: !!selectedCompanyId,
   });
 
+  const { data: projects } = useQuery({
+    queryKey: queryKeys.projects.list(selectedCompanyId!),
+    queryFn: () => projectsApi.list(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
   const {
     data: adapterModels,
     error: adapterModelsError,
@@ -110,7 +118,13 @@ export function NewAgent() {
   });
 
   const isFirstAgent = !agents || agents.length === 0;
-  const effectiveRole = isFirstAgent ? "ceo" : role;
+  const inferredMode = resolveCompanyOperatingMode({
+    company: selectedCompany,
+    agents,
+    projects,
+  });
+  const isCodebaseMode = inferredMode === "codebase" || isAgentInstructionPreset(requestedInstructionPreset);
+  const effectiveRole = isFirstAgent ? (isCodebaseMode ? "engineer" : "ceo") : role;
 
   useEffect(() => {
     setBreadcrumbs([
@@ -121,10 +135,15 @@ export function NewAgent() {
 
   useEffect(() => {
     if (isFirstAgent) {
+      if (isCodebaseMode) {
+        if (!name) setName("Builder");
+        if (!title) setTitle("Code Builder");
+        return;
+      }
       if (!name) setName("CEO");
       if (!title) setTitle("CEO");
     }
-  }, [isFirstAgent]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isCodebaseMode, isFirstAgent]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function applyInstructionPreset(
     nextPreset: AgentInstructionPreset,
@@ -149,12 +168,16 @@ export function NewAgent() {
 
   useEffect(() => {
     if (isFirstAgent) {
+      if (isCodebaseMode) {
+        applyInstructionPreset("coding_builder");
+        return;
+      }
       setInstructionPreset(null);
       return;
     }
     if (!isAgentInstructionPreset(requestedInstructionPreset)) return;
     applyInstructionPreset(requestedInstructionPreset);
-  }, [isFirstAgent, requestedInstructionPreset]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isCodebaseMode, isFirstAgent, requestedInstructionPreset]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (instructionPreset) return;
@@ -378,14 +401,18 @@ export function NewAgent() {
         <div className="border-t border-border px-4 py-4">
           <div className="space-y-3">
             <div>
-              <h2 className="text-sm font-medium">Company skills</h2>
+              <h2 className="text-sm font-medium">
+                {isCodebaseMode ? "Shared skills" : "Company skills"}
+              </h2>
               <p className="mt-1 text-xs text-muted-foreground">
-                Optional skills from the company library. Built-in Paperclip runtime skills are added automatically.
+                {isCodebaseMode
+                  ? "Optional skills from the shared library. Built-in Paperclip runtime skills are added automatically."
+                  : "Optional skills from the company library. Built-in Paperclip runtime skills are added automatically."}
               </p>
             </div>
             {availableSkills.length === 0 ? (
               <p className="text-xs text-muted-foreground">
-                No optional company skills installed yet.
+                {isCodebaseMode ? "No optional shared skills installed yet." : "No optional company skills installed yet."}
               </p>
             ) : (
               <div className="space-y-3">
@@ -416,7 +443,9 @@ export function NewAgent() {
         {/* Footer */}
         <div className="border-t border-border px-4 py-3">
           {isFirstAgent && (
-            <p className="text-xs text-muted-foreground mb-2">This will be the CEO</p>
+            <p className="text-xs text-muted-foreground mb-2">
+              {isCodebaseMode ? "This will be the first coding agent" : "This will be the CEO"}
+            </p>
           )}
           {formError && (
             <p className="text-xs text-destructive mb-2">{formError}</p>

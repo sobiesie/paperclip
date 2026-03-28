@@ -1,9 +1,10 @@
-import type { CompanyStatus, PauseReason } from "../constants.js";
+import type { CompanyOperatingMode, CompanyStatus, PauseReason } from "../constants.js";
 
 export interface Company {
   id: string;
   name: string;
   description: string | null;
+  operatingMode: CompanyOperatingMode;
   status: CompanyStatus;
   pauseReason: PauseReason | null;
   pausedAt: Date | null;

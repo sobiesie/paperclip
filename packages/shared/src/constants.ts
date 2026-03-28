@@ -1,6 +1,9 @@
 export const COMPANY_STATUSES = ["active", "paused", "archived"] as const;
 export type CompanyStatus = (typeof COMPANY_STATUSES)[number];
 
+export const COMPANY_OPERATING_MODES = ["company", "codebase"] as const;
+export type CompanyOperatingMode = (typeof COMPANY_OPERATING_MODES)[number];
+
 export const DEPLOYMENT_MODES = ["local_trusted", "authenticated"] as const;
 export type DeploymentMode = (typeof DEPLOYMENT_MODES)[number];
 

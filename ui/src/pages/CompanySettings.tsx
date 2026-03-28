@@ -1,5 +1,6 @@
 import { ChangeEvent, useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { CompanyOperatingMode } from "@paperclipai/shared";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
@@ -7,8 +8,9 @@ import { companiesApi } from "../api/companies";
 import { accessApi } from "../api/access";
 import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
+import { cn } from "../lib/utils";
 import { Button } from "@/components/ui/button";
-import { Settings, Check, Download, Upload } from "lucide-react";
+import { Settings, Check, Download, Upload, Building2, Code2 } from "lucide-react";
 import { CompanyPatternIcon } from "../components/CompanyPatternIcon";
 import {
   Field,
@@ -17,6 +19,8 @@ import {
 } from "../components/agent-config-primitives";
 
 type AgentSnippetInput = {
+  companyName: string;
+  operatingMode: CompanyOperatingMode;
   onboardingTextUrl: string;
   connectionCandidates?: string[] | null;
   testResolutionUrl?: string | null;
@@ -35,6 +39,7 @@ export function CompanySettings() {
   // General settings local state
   const [companyName, setCompanyName] = useState("");
   const [description, setDescription] = useState("");
+  const [operatingMode, setOperatingMode] = useState<CompanyOperatingMode>("company");
   const [brandColor, setBrandColor] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
   const [logoUploadError, setLogoUploadError] = useState<string | null>(null);
@@ -44,9 +49,20 @@ export function CompanySettings() {
     if (!selectedCompany) return;
     setCompanyName(selectedCompany.name);
     setDescription(selectedCompany.description ?? "");
+    setOperatingMode(selectedCompany.operatingMode);
     setBrandColor(selectedCompany.brandColor ?? "");
     setLogoUrl(selectedCompany.logoUrl ?? "");
   }, [selectedCompany]);
+
+  const isCodebaseMode = operatingMode === "codebase";
+  const settingsTitle = isCodebaseMode ? "Workspace Settings" : "Company Settings";
+  const identityLabel = isCodebaseMode ? "Workspace name" : "Company name";
+  const identityHint = isCodebaseMode
+    ? "The display name for this workspace."
+    : "The display name for your company.";
+  const descriptionHint = isCodebaseMode
+    ? "Optional description shown in the workspace profile."
+    : "Optional description shown in the company profile.";
 
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteSnippet, setInviteSnippet] = useState<string | null>(null);
@@ -57,12 +73,14 @@ export function CompanySettings() {
     !!selectedCompany &&
     (companyName !== selectedCompany.name ||
       description !== (selectedCompany.description ?? "") ||
+      operatingMode !== selectedCompany.operatingMode ||
       brandColor !== (selectedCompany.brandColor ?? ""));
 
   const generalMutation = useMutation({
     mutationFn: (data: {
       name: string;
       description: string | null;
+      operatingMode: CompanyOperatingMode;
       brandColor: string | null;
     }) => companiesApi.update(selectedCompanyId!, data),
     onSuccess: () => {
@@ -99,6 +117,8 @@ export function CompanySettings() {
       try {
         const manifest = await accessApi.getInviteOnboarding(invite.token);
         snippet = buildAgentSnippet({
+          companyName: companyName.trim() || selectedCompany?.name || "Workspace",
+          operatingMode,
           onboardingTextUrl: absoluteUrl,
           connectionCandidates:
             manifest.onboarding.connectivity?.connectionCandidates ?? null,
@@ -108,6 +128,8 @@ export function CompanySettings() {
         });
       } catch {
         snippet = buildAgentSnippet({
+          companyName: companyName.trim() || selectedCompany?.name || "Workspace",
+          operatingMode,
           onboardingTextUrl: absoluteUrl,
           connectionCandidates: null,
           testResolutionUrl: null
@@ -207,7 +229,7 @@ export function CompanySettings() {
   if (!selectedCompany) {
     return (
       <div className="text-sm text-muted-foreground">
-        No company selected. Select a company from the switcher above.
+        No workspace selected. Select one from the switcher above.
       </div>
     );
   }
@@ -216,6 +238,7 @@ export function CompanySettings() {
     generalMutation.mutate({
       name: companyName.trim(),
       description: description.trim() || null,
+      operatingMode,
       brandColor: brandColor || null
     });
   }
@@ -224,7 +247,7 @@ export function CompanySettings() {
     <div className="max-w-2xl space-y-6">
       <div className="flex items-center gap-2">
         <Settings className="h-5 w-5 text-muted-foreground" />
-        <h1 className="text-lg font-semibold">Company Settings</h1>
+        <h1 className="text-lg font-semibold">{settingsTitle}</h1>
       </div>
 
       {/* General */}
@@ -233,7 +256,7 @@ export function CompanySettings() {
           General
         </div>
         <div className="space-y-3 rounded-md border border-border px-4 py-4">
-          <Field label="Company name" hint="The display name for your company.">
+          <Field label={identityLabel} hint={identityHint}>
             <input
               className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
               type="text"
@@ -242,14 +265,48 @@ export function CompanySettings() {
             />
           </Field>
           <Field
+            label="Operating mode"
+            hint="Use company mode for organization-style planning, or codebase mode for coding-agent workspaces."
+          >
+            <div className="inline-flex rounded-md border border-border p-1">
+              {[
+                {
+                  id: "company" as CompanyOperatingMode,
+                  label: "Company",
+                  icon: Building2,
+                },
+                {
+                  id: "codebase" as CompanyOperatingMode,
+                  label: "Codebase",
+                  icon: Code2,
+                },
+              ].map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setOperatingMode(id)}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium transition-colors",
+                    operatingMode === id
+                      ? "bg-foreground text-background"
+                      : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                  )}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {label}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field
             label="Description"
-            hint="Optional description shown in the company profile."
+            hint={descriptionHint}
           >
             <input
               className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
               type="text"
               value={description}
-              placeholder="Optional company description"
+              placeholder={isCodebaseMode ? "Optional workspace description" : "Optional company description"}
               onChange={(e) => setDescription(e.target.value)}
             />
           </Field>
@@ -315,7 +372,7 @@ export function CompanySettings() {
               </Field>
               <Field
                 label="Brand color"
-                hint="Sets the hue for the company icon. Leave empty for auto-generated color."
+                hint={`Sets the hue for the ${isCodebaseMode ? "workspace" : "company"} icon. Leave empty for auto-generated color.`}
               >
                 <div className="flex items-center gap-2">
                   <input
@@ -470,8 +527,7 @@ export function CompanySettings() {
         </div>
         <div className="rounded-md border border-border px-4 py-4">
           <p className="text-sm text-muted-foreground">
-            Import and export have moved to dedicated pages accessible from the{" "}
-            <a href="/org" className="underline hover:text-foreground">Org Chart</a> header.
+            Import and export live on dedicated pages below.
           </p>
           <div className="mt-3 flex items-center gap-2">
             <Button size="sm" variant="outline" asChild>
@@ -573,7 +629,9 @@ Then verify with: curl -fsS <base-url>/api/health`;
     ? `\nYou MUST test Paperclip-to-gateway reachability, call: ${resolutionTestUrl}?url=<urlencoded-gateway-url> (using the hostname that worked above). Do not assume your 172.x is necessarily reachable from Paperclip. Test it. `
     : "";
 
-  return `You're invited to join a Paperclip organization.
+  const containerLabel = input.operatingMode === "codebase" ? "workspace" : "organization";
+
+  return `You're invited to join the Paperclip ${containerLabel} "${input.companyName}".
 
 The URLs you should try are:
 ${candidateList}

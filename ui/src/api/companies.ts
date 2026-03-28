@@ -1,5 +1,6 @@
 import type {
   Company,
+  CompanyOperatingMode,
   CompanyPortabilityExportRequest,
   CompanyPortabilityExportPreviewResult,
   CompanyPortabilityExportResult,
@@ -20,6 +21,7 @@ export const companiesApi = {
   create: (data: {
     name: string;
     description?: string | null;
+    operatingMode?: CompanyOperatingMode;
     budgetMonthlyCents?: number;
   }) =>
     api.post<Company>("/companies", data),
@@ -28,7 +30,7 @@ export const companiesApi = {
     data: Partial<
       Pick<
         Company,
-        "name" | "description" | "status" | "budgetMonthlyCents" | "requireBoardApprovalForNewAgents" | "brandColor" | "logoAssetId"
+        "name" | "description" | "operatingMode" | "status" | "budgetMonthlyCents" | "requireBoardApprovalForNewAgents" | "brandColor" | "logoAssetId"
       >
     >,
   ) => api.patch<Company>(`/companies/${companyId}`, data),

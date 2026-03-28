@@ -40,7 +40,7 @@ export function CompanySwitcher() {
               <span className={`h-2 w-2 rounded-full shrink-0 ${statusDotColor(selectedCompany.status)}`} />
             )}
             <span className="text-sm font-medium truncate">
-              {selectedCompany?.name ?? "Select company"}
+              {selectedCompany?.name ?? "Select workspace"}
             </span>
           </div>
           <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -66,7 +66,7 @@ export function CompanySwitcher() {
         <DropdownMenuItem asChild>
           <Link to="/company/settings" className="no-underline text-inherit">
             <Settings className="h-4 w-4 mr-2" />
-            Company Settings
+            {selectedCompany?.operatingMode === "codebase" ? "Workspace Settings" : "Company Settings"}
           </Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>

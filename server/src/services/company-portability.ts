@@ -2288,7 +2288,7 @@ function buildManifestFromPackageFiles(
   const skillPaths = Array.from(new Set([...referencedSkillPaths, ...discoveredSkillPaths])).sort();
 
   const manifest: CompanyPortabilityManifest = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     generatedAt: new Date().toISOString(),
     source: opts?.sourceLabel ?? null,
     includes: {
@@ -2302,6 +2302,8 @@ function buildManifestFromPackageFiles(
       path: resolvedCompanyPath,
       name: companyName,
       description: asString(companyFrontmatter.description),
+      operatingMode:
+        asString(paperclipCompany.operatingMode) === "codebase" ? "codebase" : "company",
       brandColor: asString(paperclipCompany.brandColor),
       logoPath: asString(paperclipCompany.logoPath) ?? asString(paperclipCompany.logo),
       requireBoardApprovalForNewAgents:
@@ -3222,6 +3224,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
       {
         schema: "paperclip/v1",
         company: stripEmptyValues({
+          operatingMode: company.operatingMode === "codebase" ? company.operatingMode : undefined,
           brandColor: company.brandColor ?? null,
           logoPath: companyLogoPath,
           requireBoardApprovalForNewAgents: company.requireBoardApprovalForNewAgents ? undefined : false,
@@ -3730,6 +3733,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
       const created = await companies.create({
         name: companyName,
         description: include.company ? (sourceManifest.company?.description ?? null) : null,
+        operatingMode: include.company ? (sourceManifest.company?.operatingMode ?? "company") : "company",
         brandColor: include.company ? (sourceManifest.company?.brandColor ?? null) : null,
         requireBoardApprovalForNewAgents: include.company
           ? (sourceManifest.company?.requireBoardApprovalForNewAgents ?? true)
@@ -3749,6 +3753,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         const updated = await companies.update(targetCompany.id, {
           name: sourceManifest.company.name,
           description: sourceManifest.company.description,
+          operatingMode: sourceManifest.company.operatingMode,
           brandColor: sourceManifest.company.brandColor,
           requireBoardApprovalForNewAgents: sourceManifest.company.requireBoardApprovalForNewAgents,
         });

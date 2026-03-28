@@ -1,0 +1,1 @@
+ALTER TABLE "companies" ADD COLUMN "operating_mode" text DEFAULT 'company' NOT NULL;

@@ -3,6 +3,7 @@ import { Link, useNavigate, useLocation } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import { agentsApi, type OrgNode } from "../api/agents";
 import { heartbeatsApi } from "../api/heartbeats";
+import { projectsApi } from "../api/projects";
 import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -19,6 +20,7 @@ import { Tabs } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Bot, Plus, List, GitBranch, SlidersHorizontal } from "lucide-react";
 import { AGENT_ROLE_LABELS, type Agent } from "@paperclipai/shared";
+import { resolveCompanyOperatingMode } from "../lib/company-operating-mode";
 
 const adapterLabels: Record<string, string> = {
   claude_local: "Claude",
@@ -63,7 +65,7 @@ function filterOrgTree(nodes: OrgNode[], tab: FilterTab, showTerminated: boolean
 }
 
 export function Agents() {
-  const { selectedCompanyId } = useCompany();
+  const { selectedCompany, selectedCompanyId } = useCompany();
   const { openNewAgent } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
   const navigate = useNavigate();
@@ -71,9 +73,8 @@ export function Agents() {
   const { isMobile } = useSidebar();
   const pathSegment = location.pathname.split("/").pop() ?? "all";
   const tab: FilterTab = (pathSegment === "all" || pathSegment === "active" || pathSegment === "paused" || pathSegment === "error") ? pathSegment : "all";
-  const [view, setView] = useState<"list" | "org">("org");
+  const [view, setView] = useState<"list" | "org" | null>(null);
   const forceListView = isMobile;
-  const effectiveView: "list" | "org" = forceListView ? "list" : view;
   const [showTerminated, setShowTerminated] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
@@ -82,6 +83,21 @@ export function Agents() {
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
+
+  const { data: projects } = useQuery({
+    queryKey: queryKeys.projects.list(selectedCompanyId!),
+    queryFn: () => projectsApi.list(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
+  const operatingMode = resolveCompanyOperatingMode({
+    company: selectedCompany,
+    agents,
+    projects,
+  });
+  const effectiveView: "list" | "org" = forceListView
+    ? "list"
+    : view ?? (operatingMode === "codebase" ? "list" : "org");
 
   const { data: orgTree } = useQuery({
     queryKey: queryKeys.org(selectedCompanyId!),
@@ -122,7 +138,7 @@ export function Agents() {
   }, [setBreadcrumbs]);
 
   if (!selectedCompanyId) {
-    return <EmptyState icon={Bot} message="Select a company to view agents." />;
+    return <EmptyState icon={Bot} message="Select a workspace to view agents." />;
   }
 
   if (isLoading) {
@@ -217,7 +233,9 @@ export function Agents() {
       {agents && agents.length === 0 && (
         <EmptyState
           icon={Bot}
-          message="Create your first agent to get started."
+          message={operatingMode === "codebase"
+            ? "Create your first coding agent to get started."
+            : "Create your first agent to get started."}
           action="New Agent"
           onAction={openNewAgent}
         />
@@ -302,7 +320,7 @@ export function Agents() {
 
       {effectiveView === "org" && orgTree && orgTree.length === 0 && (
         <p className="text-sm text-muted-foreground text-center py-8">
-          No organizational hierarchy defined.
+          {operatingMode === "codebase" ? "No agent handoff graph defined." : "No organizational hierarchy defined."}
         </p>
       )}
     </div>

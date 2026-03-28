@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { COMPANY_OPERATING_MODES } from "../constants.js";
 
 export const portabilityIncludeSchema = z
   .object({
@@ -33,6 +34,7 @@ export const portabilityCompanyManifestEntrySchema = z.object({
   path: z.string().min(1),
   name: z.string().min(1),
   description: z.string().nullable(),
+  operatingMode: z.enum(COMPANY_OPERATING_MODES).optional().default("company"),
   brandColor: z.string().nullable(),
   logoPath: z.string().nullable(),
   requireBoardApprovalForNewAgents: z.boolean(),

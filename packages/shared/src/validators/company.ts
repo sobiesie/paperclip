@@ -1,12 +1,14 @@
 import { z } from "zod";
-import { COMPANY_STATUSES } from "../constants.js";
+import { COMPANY_OPERATING_MODES, COMPANY_STATUSES } from "../constants.js";
 
 const logoAssetIdSchema = z.string().uuid().nullable().optional();
 const brandColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional();
+const companyOperatingModeSchema = z.enum(COMPANY_OPERATING_MODES);
 
 export const createCompanySchema = z.object({
   name: z.string().min(1),
   description: z.string().optional().nullable(),
+  operatingMode: companyOperatingModeSchema.optional().default("company"),
   budgetMonthlyCents: z.number().int().nonnegative().optional().default(0),
 });
 
@@ -16,6 +18,7 @@ export const updateCompanySchema = createCompanySchema
   .partial()
   .extend({
     status: z.enum(COMPANY_STATUSES).optional(),
+    operatingMode: companyOperatingModeSchema.optional(),
     spentMonthlyCents: z.number().int().nonnegative().optional(),
     requireBoardApprovalForNewAgents: z.boolean().optional(),
     brandColor: brandColorSchema,

@@ -28,6 +28,7 @@ export interface CompanyPortabilityCompanyManifestEntry {
   path: string;
   name: string;
   description: string | null;
+  operatingMode: "company" | "codebase";
   brandColor: string | null;
   logoPath: string | null;
   requireBoardApprovalForNewAgents: boolean;

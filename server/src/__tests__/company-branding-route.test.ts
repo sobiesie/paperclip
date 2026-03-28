@@ -50,6 +50,7 @@ function createCompany() {
     id: "company-1",
     name: "Paperclip",
     description: null,
+    operatingMode: "company",
     status: "active",
     issuePrefix: "PAP",
     issueCounter: 568,

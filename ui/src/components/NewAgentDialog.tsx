@@ -4,6 +4,7 @@ import { useNavigate } from "@/lib/router";
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
 import { agentsApi } from "../api/agents";
+import { projectsApi } from "../api/projects";
 import { queryKeys } from "../lib/queryKeys";
 import {
   Dialog,
@@ -25,6 +26,7 @@ import {
   AGENT_INSTRUCTION_PRESET_OPTIONS,
   type AgentInstructionPresetOption,
 } from "../lib/agent-instruction-presets";
+import { resolveCompanyOperatingMode } from "../lib/company-operating-mode";
 
 type AdvancedAdapterType =
   | "claude_local"
@@ -90,7 +92,7 @@ const ADVANCED_ADAPTER_OPTIONS: Array<{
 
 export function NewAgentDialog() {
   const { newAgentOpen, closeNewAgent, openNewIssue } = useDialog();
-  const { selectedCompanyId } = useCompany();
+  const { selectedCompany, selectedCompanyId } = useCompany();
   const navigate = useNavigate();
   const [showAdvancedCards, setShowAdvancedCards] = useState(false);
 
@@ -100,14 +102,39 @@ export function NewAgentDialog() {
     enabled: !!selectedCompanyId && newAgentOpen,
   });
 
-  const ceoAgent = (agents ?? []).find((a) => a.role === "ceo");
+  const { data: projects } = useQuery({
+    queryKey: queryKeys.projects.list(selectedCompanyId!),
+    queryFn: () => projectsApi.list(selectedCompanyId!),
+    enabled: !!selectedCompanyId && newAgentOpen,
+  });
 
-  function handleAskCeo() {
+  const operatingMode = resolveCompanyOperatingMode({
+    company: selectedCompany,
+    agents,
+    projects,
+  });
+  const ceoAgent = (agents ?? []).find((a) => a.role === "ceo");
+  const leadAgent = ceoAgent
+    ?? (agents ?? []).find((a) => a.instructionPreset === "coding_builder")
+    ?? (agents ?? []).find((a) => a.permissions.canCreateAgents)
+    ?? (agents ?? [])[0]
+    ?? null;
+  const leadAgentLabel = leadAgent?.name ?? "a lead agent";
+  const recommendationMessage = operatingMode === "codebase"
+    ? "We recommend letting a lead agent handle setup so workspace access, instructions, and adapter settings stay consistent across the codebase."
+    : "We recommend letting a lead agent handle setup so permissions, reporting, and adapter settings stay consistent.";
+  const askLeadButtonLabel = operatingMode === "codebase"
+    ? `Ask ${leadAgentLabel} to create a coding agent`
+    : `Ask ${leadAgentLabel} to create a new agent`;
+
+  function handleAskLeadAgent() {
     closeNewAgent();
     openNewIssue({
-      assigneeAgentId: ceoAgent?.id,
-      title: "Create a new agent",
-      description: "(type in what kind of agent you want here)",
+      assigneeAgentId: leadAgent?.id,
+      title: operatingMode === "codebase" ? "Create a new coding agent" : "Create a new agent",
+      description: operatingMode === "codebase"
+        ? "(describe the builder, reviewer, fixer, or specialist coding agent you want here)"
+        : "(type in what kind of agent you want here)",
     });
   }
 
@@ -168,15 +195,13 @@ export function NewAgentDialog() {
                   <Sparkles className="h-6 w-6 text-foreground" />
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  We recommend letting your CEO handle agent setup — they know the
-                  org structure and can configure reporting, permissions, and
-                  adapters.
+                  {recommendationMessage}
                 </p>
               </div>
 
-              <Button className="w-full" size="lg" onClick={handleAskCeo}>
+              <Button className="w-full" size="lg" onClick={handleAskLeadAgent}>
                 <Bot className="h-4 w-4 mr-2" />
-                Ask the CEO to create a new agent
+                {askLeadButtonLabel}
               </Button>
 
               {/* Advanced link */}
