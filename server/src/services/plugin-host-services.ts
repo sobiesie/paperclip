@@ -32,10 +32,12 @@ import type { PluginEventBus } from "./plugin-event-bus.js";
 import {
   getCommentWorkflowIssueStatus,
   getCommentWorkflowWakeReason,
+  getProjectCodingWorkflowPolicy,
   inferWorkProductWorkflowAction,
   isClosedIssueStatus,
   resolveCommentWorkflowHandoff,
   sameValue,
+  shouldAutoRequestReviewFromWorkProduct,
 } from "./issue-coding-workflow.js";
 import { lookup as dnsLookup } from "node:dns/promises";
 import type { IncomingMessage, RequestOptions as HttpRequestOptions } from "node:http";
@@ -846,9 +848,18 @@ export function buildHostServices(
           throw new Error("Work product not found");
         }
 
-        const workflowAction = inferWorkProductWorkflowAction(existing, product);
-        const issue = workflowAction ? await issues.getById(existing.issueId) : null;
+        const inferredWorkflowAction = inferWorkProductWorkflowAction(existing, product);
+        const issue = inferredWorkflowAction ? await issues.getById(existing.issueId) : null;
         let currentIssue = issue && inCompany(issue, companyId) ? issue : null;
+        const project =
+          currentIssue?.projectId && inferredWorkflowAction === "request_review"
+            ? await projects.getById(currentIssue.projectId)
+            : null;
+        const workflowAction =
+          inferredWorkflowAction === "request_review" &&
+          !shouldAutoRequestReviewFromWorkProduct(getProjectCodingWorkflowPolicy(project))
+            ? undefined
+            : inferredWorkflowAction;
         let workflowHandoff: Awaited<ReturnType<typeof resolveCommentWorkflowHandoff>> = null;
 
         if (currentIssue && workflowAction) {
@@ -868,6 +879,9 @@ export function buildHostServices(
             workflowIssuePatch.assigneeAgentId = workflowHandoff.assigneeAgentId;
             workflowIssuePatch.assigneeUserId = null;
             workflowIssuePatch.codingWorkflowState = workflowHandoff.codingWorkflowState;
+          }
+          if (workflowHandoff?.issuePatch) {
+            Object.assign(workflowIssuePatch, workflowHandoff.issuePatch);
           }
 
           if (Object.keys(workflowIssuePatch).length > 0) {

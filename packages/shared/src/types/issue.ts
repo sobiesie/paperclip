@@ -59,6 +59,7 @@ export interface IssueAssigneeAdapterOverrides {
 export interface IssueCodingWorkflowState {
   builderAgentId: string | null;
   reviewerAgentId: string | null;
+  builderExecutionWorkspaceId?: string | null;
 }
 
 export type DocumentFormat = "markdown";

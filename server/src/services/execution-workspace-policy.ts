@@ -36,10 +36,23 @@ function parseProjectCodingWorkflowPolicy(raw: unknown): ProjectCodingWorkflowPo
   if (Object.keys(parsed).length === 0) return null;
   const reviewerAgentId = typeof parsed.reviewerAgentId === "string" ? parsed.reviewerAgentId : undefined;
   const fixerAgentId = typeof parsed.fixerAgentId === "string" ? parsed.fixerAgentId : undefined;
-  if (!reviewerAgentId && !fixerAgentId) return null;
+  const autoRequestReviewOnPrReady =
+    typeof parsed.autoRequestReviewOnPrReady === "boolean" ? parsed.autoRequestReviewOnPrReady : undefined;
+  const requireFreshWorkspaceForReview =
+    typeof parsed.requireFreshWorkspaceForReview === "boolean" ? parsed.requireFreshWorkspaceForReview : undefined;
+  if (
+    !reviewerAgentId &&
+    !fixerAgentId &&
+    autoRequestReviewOnPrReady === undefined &&
+    requireFreshWorkspaceForReview === undefined
+  ) {
+    return null;
+  }
   return {
     ...(reviewerAgentId ? { reviewerAgentId } : {}),
     ...(fixerAgentId ? { fixerAgentId } : {}),
+    ...(autoRequestReviewOnPrReady !== undefined ? { autoRequestReviewOnPrReady } : {}),
+    ...(requireFreshWorkspaceForReview !== undefined ? { requireFreshWorkspaceForReview } : {}),
   };
 }
 

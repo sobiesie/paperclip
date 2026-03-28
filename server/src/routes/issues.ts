@@ -42,10 +42,12 @@ import {
   type CommentWorkflowHandoff,
   getCommentWorkflowIssueStatus,
   getCommentWorkflowWakeReason,
+  getProjectCodingWorkflowPolicy,
   inferWorkProductWorkflowAction,
   isClosedIssueStatus,
   resolveCommentWorkflowHandoff,
   sameValue,
+  shouldAutoRequestReviewFromWorkProduct,
 } from "../services/issue-coding-workflow.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
@@ -711,8 +713,17 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
     const actor = getActorInfo(req);
-    const workflowAction = inferWorkProductWorkflowAction(existing, product);
-    const issue = workflowAction ? await svc.getById(existing.issueId) : null;
+    const inferredWorkflowAction = inferWorkProductWorkflowAction(existing, product);
+    const issue = inferredWorkflowAction ? await svc.getById(existing.issueId) : null;
+    const project =
+      issue?.projectId && inferredWorkflowAction === "request_review"
+        ? await projectsSvc.getById(issue.projectId)
+        : null;
+    const workflowAction =
+      inferredWorkflowAction === "request_review" &&
+      !shouldAutoRequestReviewFromWorkProduct(getProjectCodingWorkflowPolicy(project))
+        ? undefined
+        : inferredWorkflowAction;
     let currentIssue = issue;
     let workflowHandoff: CommentWorkflowHandoff | null = null;
 
@@ -736,6 +747,9 @@ export function issueRoutes(db: Db, storage: StorageService) {
         workflowIssuePatch.assigneeAgentId = workflowHandoff.assigneeAgentId;
         workflowIssuePatch.assigneeUserId = null;
         workflowIssuePatch.codingWorkflowState = workflowHandoff.codingWorkflowState;
+      }
+      if (workflowHandoff?.issuePatch) {
+        Object.assign(workflowIssuePatch, workflowHandoff.issuePatch);
       }
 
       if (Object.keys(workflowIssuePatch).length > 0) {
@@ -1519,6 +1533,9 @@ export function issueRoutes(db: Db, storage: StorageService) {
       workflowIssuePatch.assigneeAgentId = workflowHandoff.assigneeAgentId;
       workflowIssuePatch.assigneeUserId = null;
       workflowIssuePatch.codingWorkflowState = workflowHandoff.codingWorkflowState;
+    }
+    if (workflowHandoff?.issuePatch) {
+      Object.assign(workflowIssuePatch, workflowHandoff.issuePatch);
     }
 
     if (Object.keys(workflowIssuePatch).length > 0) {

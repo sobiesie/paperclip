@@ -3,6 +3,7 @@ import type {
   IssueCommentWorkflowAction,
   IssueStatus,
   IssueWorkProduct,
+  Project,
   ProjectCodingWorkflowPolicy,
 } from "@paperclipai/shared";
 
@@ -25,6 +26,7 @@ type ProjectWorkflowReader = {
 export type CommentWorkflowHandoff = {
   assigneeAgentId: string;
   codingWorkflowState: IssueCodingWorkflowState;
+  issuePatch?: Record<string, unknown>;
   wakeReason: string | null;
   kind: "request_review" | "changes_requested" | "continue";
 };
@@ -78,8 +80,47 @@ function parseIssueCodingWorkflowState(raw: unknown): IssueCodingWorkflowState |
     typeof (raw as Record<string, unknown>).reviewerAgentId === "string"
       ? ((raw as Record<string, unknown>).reviewerAgentId as string)
       : null;
-  if (!builderAgentId && !reviewerAgentId) return null;
-  return { builderAgentId, reviewerAgentId };
+  const builderExecutionWorkspaceId =
+    typeof (raw as Record<string, unknown>).builderExecutionWorkspaceId === "string"
+      ? ((raw as Record<string, unknown>).builderExecutionWorkspaceId as string)
+      : undefined;
+  if (!builderAgentId && !reviewerAgentId && !builderExecutionWorkspaceId) return null;
+  return {
+    builderAgentId,
+    reviewerAgentId,
+    ...(builderExecutionWorkspaceId ? { builderExecutionWorkspaceId } : {}),
+  };
+}
+
+function cloneIssueWorkspaceSettings(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  return { ...(raw as Record<string, unknown>) };
+}
+
+function buildCodingWorkflowState(input: {
+  builderAgentId: string | null;
+  reviewerAgentId: string | null;
+  builderExecutionWorkspaceId?: string | null;
+}): IssueCodingWorkflowState {
+  return {
+    builderAgentId: input.builderAgentId,
+    reviewerAgentId: input.reviewerAgentId,
+    ...(input.builderExecutionWorkspaceId ? { builderExecutionWorkspaceId: input.builderExecutionWorkspaceId } : {}),
+  };
+}
+
+export function getProjectCodingWorkflowPolicy(
+  project: Pick<Project, "executionWorkspacePolicy"> | {
+    executionWorkspacePolicy?: { codingWorkflowPolicy?: ProjectCodingWorkflowPolicy | null } | null;
+  } | null | undefined,
+): ProjectCodingWorkflowPolicy | null {
+  return project?.executionWorkspacePolicy?.codingWorkflowPolicy ?? null;
+}
+
+export function shouldAutoRequestReviewFromWorkProduct(
+  policy: ProjectCodingWorkflowPolicy | null | undefined,
+) {
+  return policy?.autoRequestReviewOnPrReady !== false;
 }
 
 async function resolveAssignableAgentId(
@@ -115,7 +156,7 @@ export async function resolveCommentWorkflowHandoff(input: {
   }
 
   const project = await input.projectsSvc.getById(input.issue.projectId);
-  const policy = project?.executionWorkspacePolicy?.codingWorkflowPolicy as ProjectCodingWorkflowPolicy | null | undefined;
+  const policy = getProjectCodingWorkflowPolicy(project);
   const currentState = parseIssueCodingWorkflowState(input.issue.codingWorkflowState);
 
   if (input.workflowAction === "request_review") {
@@ -125,12 +166,28 @@ export async function resolveCommentWorkflowHandoff(input: {
       input.agentsSvc,
     );
     if (!reviewerAgentId || reviewerAgentId === input.issue.assigneeAgentId) return null;
+    const builderExecutionWorkspaceId =
+      typeof (input.issue as Record<string, unknown>).executionWorkspaceId === "string"
+        ? ((input.issue as Record<string, unknown>).executionWorkspaceId as string)
+        : currentState?.builderExecutionWorkspaceId ?? null;
+    const issuePatch = policy?.requireFreshWorkspaceForReview
+      ? {
+          executionWorkspaceId: null,
+          executionWorkspacePreference: "isolated_workspace",
+          executionWorkspaceSettings: {
+            ...(cloneIssueWorkspaceSettings((input.issue as Record<string, unknown>).executionWorkspaceSettings) ?? {}),
+            mode: "isolated_workspace",
+          },
+        }
+      : undefined;
     return {
       assigneeAgentId: reviewerAgentId,
-      codingWorkflowState: {
+      codingWorkflowState: buildCodingWorkflowState({
         builderAgentId: input.issue.assigneeAgentId,
         reviewerAgentId,
-      },
+        builderExecutionWorkspaceId,
+      }),
+      ...(issuePatch ? { issuePatch } : {}),
       wakeReason: "issue_review_requested",
       kind: "request_review",
     };
@@ -152,12 +209,21 @@ export async function resolveCommentWorkflowHandoff(input: {
   const nextAssigneeAgentId = preferredFixerAgentId ?? builderAgentId;
   if (!nextAssigneeAgentId || nextAssigneeAgentId === input.issue.assigneeAgentId) return null;
 
+  const builderExecutionWorkspaceId = currentState?.builderExecutionWorkspaceId ?? null;
+  const issuePatch = builderExecutionWorkspaceId
+    ? {
+        executionWorkspaceId: builderExecutionWorkspaceId,
+        executionWorkspacePreference: "reuse_existing",
+      }
+    : undefined;
   return {
     assigneeAgentId: nextAssigneeAgentId,
-    codingWorkflowState: {
+    codingWorkflowState: buildCodingWorkflowState({
       builderAgentId: nextAssigneeAgentId,
       reviewerAgentId: input.issue.assigneeAgentId,
-    },
+      builderExecutionWorkspaceId,
+    }),
+    ...(issuePatch ? { issuePatch } : {}),
     wakeReason: null,
     kind: input.workflowAction,
   };

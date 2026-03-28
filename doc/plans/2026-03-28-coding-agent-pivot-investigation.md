@@ -18,6 +18,7 @@ The first implementation slices are now underway in the product:
 - a first-party GitHub coding-sync example plugin now indexes tracked pull requests from `issue.work_product_*` events and translates `pull_request` / `pull_request_review` webhooks into work-product updates that drive the same review-fix loop automatically
 - onboarding can now start in either company mode or codebase mode, with codebase onboarding defaulting to a coding-builder setup and coding-first launch copy
 - new issue creation now includes coding starter templates for refactor, review, fix-review-findings, and parallel implementation flows
+- projects can now control whether pull-request ready states auto-start review and whether reviewer handoffs should force a fresh isolated workspace before fixes route back to the builder checkout
 
 That means the repo now has a real foundation for the loop this investigation described:
 

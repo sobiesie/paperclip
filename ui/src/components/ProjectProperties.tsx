@@ -52,6 +52,8 @@ export type ProjectConfigFieldKey =
   | "execution_workspace_worktree_parent_dir"
   | "execution_workspace_provision_command"
   | "execution_workspace_teardown_command"
+  | "coding_workflow_auto_request_review"
+  | "coding_workflow_fresh_review_workspace"
   | "coding_workflow_reviewer"
   | "coding_workflow_fixer";
 
@@ -274,6 +276,8 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
   const hasAdditionalLegacyWorkspaces = workspaces.some((workspace) => workspace.id !== primaryCodebaseWorkspace?.id);
   const executionWorkspacePolicy = project.executionWorkspacePolicy ?? null;
   const codingWorkflowPolicy = executionWorkspacePolicy?.codingWorkflowPolicy ?? null;
+  const autoRequestReviewOnPrReady = codingWorkflowPolicy?.autoRequestReviewOnPrReady !== false;
+  const requireFreshWorkspaceForReview = codingWorkflowPolicy?.requireFreshWorkspaceForReview === true;
   const executionWorkspacesEnabled = executionWorkspacePolicy?.enabled === true;
   const isolatedWorkspacesEnabled = experimentalSettings?.enableIsolatedWorkspaces === true;
   const executionWorkspaceDefaultMode =
@@ -367,6 +371,8 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
       codingWorkflowPolicy: {
         reviewerAgentId: codingWorkflowPolicy?.reviewerAgentId ?? null,
         fixerAgentId: codingWorkflowPolicy?.fixerAgentId ?? null,
+        autoRequestReviewOnPrReady,
+        requireFreshWorkspaceForReview,
         ...patch,
       },
     });
@@ -1141,6 +1147,85 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
             <div className="text-xs text-muted-foreground">Coding Workflow</div>
             <div className="text-[11px] text-muted-foreground">
               Route <code>/review</code> and review follow-ups to dedicated coding agents for this project.
+            </div>
+          </div>
+
+          <div className="space-y-3 rounded-md border border-border/70 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2 text-sm">
+                  <span>Auto-start review from PR ready state</span>
+                  <SaveIndicator state={fieldState("coding_workflow_auto_request_review")} />
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  When a linked pull request becomes ready for review, move the issue into review automatically.
+                </div>
+              </div>
+              <button
+                data-slot="toggle"
+                className={cn(
+                  "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
+                  autoRequestReviewOnPrReady ? "bg-green-600" : "bg-muted",
+                )}
+                type="button"
+                onClick={() =>
+                  commitField(
+                    "coding_workflow_auto_request_review",
+                    updateCodingWorkflowPolicy({
+                      autoRequestReviewOnPrReady: !autoRequestReviewOnPrReady,
+                    })!,
+                  )
+                }
+              >
+                <span
+                  className={cn(
+                    "inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform",
+                    autoRequestReviewOnPrReady ? "translate-x-4.5" : "translate-x-0.5",
+                  )}
+                />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2 text-sm">
+                  <span>Use a fresh isolated workspace for review</span>
+                  <SaveIndicator state={fieldState("coding_workflow_fresh_review_workspace")} />
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  When review is handed to another agent, start them in a fresh isolated checkout and restore the builder checkout if changes come back.
+                </div>
+                {!isolatedWorkspacesEnabled ? (
+                  <div className="text-[11px] text-muted-foreground">
+                    Enable isolated issue checkouts in instance settings to use this policy.
+                  </div>
+                ) : null}
+              </div>
+              <button
+                data-slot="toggle"
+                className={cn(
+                  "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
+                  requireFreshWorkspaceForReview ? "bg-green-600" : "bg-muted",
+                  !isolatedWorkspacesEnabled && "cursor-not-allowed opacity-50",
+                )}
+                type="button"
+                disabled={!isolatedWorkspacesEnabled}
+                onClick={() =>
+                  commitField(
+                    "coding_workflow_fresh_review_workspace",
+                    updateCodingWorkflowPolicy({
+                      requireFreshWorkspaceForReview: !requireFreshWorkspaceForReview,
+                    })!,
+                  )
+                }
+              >
+                <span
+                  className={cn(
+                    "inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform",
+                    requireFreshWorkspaceForReview ? "translate-x-4.5" : "translate-x-0.5",
+                  )}
+                />
+              </button>
             </div>
           </div>
 

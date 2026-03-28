@@ -31,6 +31,7 @@ export const issueCodingWorkflowStateSchema = z
   .object({
     builderAgentId: z.string().uuid().nullable(),
     reviewerAgentId: z.string().uuid().nullable(),
+    builderExecutionWorkspaceId: z.string().uuid().nullable().optional(),
   })
   .strict();
 

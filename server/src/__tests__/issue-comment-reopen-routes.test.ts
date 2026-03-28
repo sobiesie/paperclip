@@ -80,6 +80,9 @@ function makeIssue(status: string, overrides: Partial<Record<string, unknown>> =
     status,
     assigneeAgentId: "22222222-2222-4222-8222-222222222222",
     assigneeUserId: null,
+    executionWorkspaceId: null,
+    executionWorkspacePreference: null,
+    executionWorkspaceSettings: null,
     codingWorkflowState: null,
     createdByUserId: "local-board",
     identifier: "PAP-580",
@@ -432,6 +435,103 @@ describe("issue comment reopen routes", () => {
     );
   });
 
+  it("forces a fresh isolated workspace when /review hands work to a reviewer", async () => {
+    let currentIssue = makeIssue("in_progress", {
+      projectId: "project-1",
+      executionWorkspaceId: "execution-workspace-1",
+      executionWorkspacePreference: "reuse_existing",
+      executionWorkspaceSettings: {
+        mode: "isolated_workspace",
+      },
+    });
+    workProducts = [makeWorkProduct()];
+    mockProjectService.getById.mockResolvedValue({
+      id: "project-1",
+      companyId: "company-1",
+      executionWorkspacePolicy: {
+        enabled: true,
+        codingWorkflowPolicy: {
+          reviewerAgentId: "33333333-3333-4333-8333-333333333333",
+          requireFreshWorkspaceForReview: true,
+        },
+      },
+    });
+    mockIssueService.getById.mockResolvedValue(currentIssue);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+      currentIssue = { ...currentIssue, ...patch };
+      return currentIssue;
+    });
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "/review" });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.update).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111", {
+      status: "in_review",
+      assigneeAgentId: "33333333-3333-4333-8333-333333333333",
+      assigneeUserId: null,
+      codingWorkflowState: {
+        builderAgentId: "22222222-2222-4222-8222-222222222222",
+        reviewerAgentId: "33333333-3333-4333-8333-333333333333",
+        builderExecutionWorkspaceId: "execution-workspace-1",
+      },
+      executionWorkspaceId: null,
+      executionWorkspacePreference: "isolated_workspace",
+      executionWorkspaceSettings: {
+        mode: "isolated_workspace",
+      },
+    });
+  });
+
+  it("can require a fresh isolated workspace when handing work to a reviewer", async () => {
+    let currentIssue = makeIssue("in_progress", {
+      projectId: "project-1",
+      executionWorkspaceId: "workspace-builder-1",
+      executionWorkspacePreference: "reuse_existing",
+      executionWorkspaceSettings: {
+        mode: "shared_workspace",
+      },
+    });
+    mockProjectService.getById.mockResolvedValue({
+      id: "project-1",
+      companyId: "company-1",
+      executionWorkspacePolicy: {
+        enabled: true,
+        codingWorkflowPolicy: {
+          reviewerAgentId: "33333333-3333-4333-8333-333333333333",
+          requireFreshWorkspaceForReview: true,
+        },
+      },
+    });
+    mockIssueService.getById.mockResolvedValue(currentIssue);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+      currentIssue = { ...currentIssue, ...patch };
+      return currentIssue;
+    });
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "/review" });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.update).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111", {
+      status: "in_review",
+      assigneeAgentId: "33333333-3333-4333-8333-333333333333",
+      assigneeUserId: null,
+      executionWorkspaceId: null,
+      executionWorkspacePreference: "isolated_workspace",
+      executionWorkspaceSettings: {
+        mode: "isolated_workspace",
+      },
+      codingWorkflowState: {
+        builderAgentId: "22222222-2222-4222-8222-222222222222",
+        reviewerAgentId: "33333333-3333-4333-8333-333333333333",
+        builderExecutionWorkspaceId: "workspace-builder-1",
+      },
+    });
+  });
+
   it("infers changes_requested from a /fix comment and wakes the assignee", async () => {
     let currentIssue = makeIssue("in_review");
     workProducts = [
@@ -523,6 +623,117 @@ describe("issue comment reopen routes", () => {
         }),
       }),
     );
+  });
+
+  it("restores the builder workspace when review sends work back", async () => {
+    let currentIssue = makeIssue("in_review", {
+      projectId: "project-1",
+      assigneeAgentId: "33333333-3333-4333-8333-333333333333",
+      executionWorkspaceId: "review-workspace-1",
+      executionWorkspacePreference: "reuse_existing",
+      codingWorkflowState: {
+        builderAgentId: "22222222-2222-4222-8222-222222222222",
+        reviewerAgentId: "33333333-3333-4333-8333-333333333333",
+        builderExecutionWorkspaceId: "builder-workspace-1",
+      },
+    });
+    workProducts = [
+      makeWorkProduct({
+        status: "ready_for_review",
+        reviewState: "needs_board_review",
+      }),
+    ];
+    mockProjectService.getById.mockResolvedValue({
+      id: "project-1",
+      companyId: "company-1",
+      executionWorkspacePolicy: {
+        enabled: true,
+        codingWorkflowPolicy: {
+          reviewerAgentId: "33333333-3333-4333-8333-333333333333",
+          requireFreshWorkspaceForReview: true,
+        },
+      },
+    });
+    mockIssueService.getById.mockResolvedValue(currentIssue);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+      currentIssue = { ...currentIssue, ...patch };
+      return currentIssue;
+    });
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "/fix parser regression from review" });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.update).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111", {
+      status: "todo",
+      assigneeAgentId: "22222222-2222-4222-8222-222222222222",
+      assigneeUserId: null,
+      codingWorkflowState: {
+        builderAgentId: "22222222-2222-4222-8222-222222222222",
+        reviewerAgentId: "33333333-3333-4333-8333-333333333333",
+        builderExecutionWorkspaceId: "builder-workspace-1",
+      },
+      executionWorkspaceId: "builder-workspace-1",
+      executionWorkspacePreference: "reuse_existing",
+    });
+  });
+
+  it("restores the builder workspace when review changes are routed back", async () => {
+    let currentIssue = makeIssue("in_review", {
+      projectId: "project-1",
+      assigneeAgentId: "33333333-3333-4333-8333-333333333333",
+      executionWorkspaceId: "workspace-review-1",
+      executionWorkspacePreference: "reuse_existing",
+      executionWorkspaceSettings: {
+        mode: "isolated_workspace",
+      },
+      codingWorkflowState: {
+        builderAgentId: "22222222-2222-4222-8222-222222222222",
+        reviewerAgentId: "33333333-3333-4333-8333-333333333333",
+        builderExecutionWorkspaceId: "workspace-builder-1",
+      },
+    });
+    workProducts = [
+      makeWorkProduct({
+        status: "ready_for_review",
+        reviewState: "needs_board_review",
+      }),
+    ];
+    mockProjectService.getById.mockResolvedValue({
+      id: "project-1",
+      companyId: "company-1",
+      executionWorkspacePolicy: {
+        enabled: true,
+        codingWorkflowPolicy: {
+          reviewerAgentId: "33333333-3333-4333-8333-333333333333",
+          requireFreshWorkspaceForReview: true,
+        },
+      },
+    });
+    mockIssueService.getById.mockResolvedValue(currentIssue);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+      currentIssue = { ...currentIssue, ...patch };
+      return currentIssue;
+    });
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "/fix parser regression from review" });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.update).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111", {
+      status: "todo",
+      assigneeAgentId: "22222222-2222-4222-8222-222222222222",
+      assigneeUserId: null,
+      executionWorkspaceId: "workspace-builder-1",
+      executionWorkspacePreference: "reuse_existing",
+      codingWorkflowState: {
+        builderAgentId: "22222222-2222-4222-8222-222222222222",
+        reviewerAgentId: "33333333-3333-4333-8333-333333333333",
+        builderExecutionWorkspaceId: "workspace-builder-1",
+      },
+    });
   });
 
   it("routes changes_requested to the configured fixer when one is set", async () => {
@@ -697,6 +908,86 @@ describe("issue comment reopen routes", () => {
           workProductId: "work-product-1",
           workflowAction: "request_review",
           source: "work_product",
+        }),
+      }),
+    );
+  });
+
+  it("does not auto-request review from PR updates when the project disables it", async () => {
+    let currentIssue = makeIssue("in_progress", {
+      projectId: "project-1",
+    });
+    workProducts = [
+      makeWorkProduct(),
+    ];
+    mockProjectService.getById.mockResolvedValue({
+      id: "project-1",
+      companyId: "company-1",
+      executionWorkspacePolicy: {
+        enabled: true,
+        codingWorkflowPolicy: {
+          reviewerAgentId: "33333333-3333-4333-8333-333333333333",
+          autoRequestReviewOnPrReady: false,
+        },
+      },
+    });
+    mockIssueService.getById.mockResolvedValue(currentIssue);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+      currentIssue = { ...currentIssue, ...patch };
+      return currentIssue;
+    });
+
+    const res = await request(createApp())
+      .patch("/api/work-products/work-product-1")
+      .send({ status: "ready_for_review", reviewState: "needs_board_review" });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.work_product_updated",
+        details: expect.not.objectContaining({
+          workflowAction: "request_review",
+        }),
+      }),
+    );
+  });
+
+  it("can disable automatic review routing from pull request ready-for-review updates", async () => {
+    let currentIssue = makeIssue("in_progress", {
+      projectId: "project-1",
+    });
+    workProducts = [
+      makeWorkProduct(),
+    ];
+    mockProjectService.getById.mockResolvedValue({
+      id: "project-1",
+      companyId: "company-1",
+      executionWorkspacePolicy: {
+        enabled: true,
+        codingWorkflowPolicy: {
+          reviewerAgentId: "33333333-3333-4333-8333-333333333333",
+          autoRequestReviewOnPrReady: false,
+        },
+      },
+    });
+    mockIssueService.getById.mockResolvedValue(currentIssue);
+
+    const res = await request(createApp())
+      .patch("/api/work-products/work-product-1")
+      .send({ status: "ready_for_review", reviewState: "needs_board_review" });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.work_product_updated",
+        details: expect.not.objectContaining({
+          workflowAction: "request_review",
         }),
       }),
     );

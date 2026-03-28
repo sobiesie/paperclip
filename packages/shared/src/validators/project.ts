@@ -16,6 +16,8 @@ const projectCodingWorkflowPolicySchema = z
   .object({
     reviewerAgentId: z.string().uuid().optional().nullable(),
     fixerAgentId: z.string().uuid().optional().nullable(),
+    autoRequestReviewOnPrReady: z.boolean().optional(),
+    requireFreshWorkspaceForReview: z.boolean().optional(),
   })
   .strict();
 

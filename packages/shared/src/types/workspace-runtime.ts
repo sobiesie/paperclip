@@ -43,6 +43,8 @@ export interface ExecutionWorkspaceStrategy {
 export interface ProjectCodingWorkflowPolicy {
   reviewerAgentId?: string | null;
   fixerAgentId?: string | null;
+  autoRequestReviewOnPrReady?: boolean;
+  requireFreshWorkspaceForReview?: boolean;
 }
 
 export interface ProjectExecutionWorkspacePolicy {
