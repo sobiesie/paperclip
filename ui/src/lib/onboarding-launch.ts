@@ -1,6 +1,11 @@
 import type { Goal } from "@paperclipai/shared";
+import {
+  deriveWorkspaceNameFromPath,
+  deriveWorkspaceNameFromRepo,
+} from "./project-workspace-input";
 
 export const ONBOARDING_PROJECT_NAME = "Onboarding";
+export const CODEBASE_ONBOARDING_PROJECT_NAME = "Codebase";
 
 function goalCreatedAt(goal: Goal) {
   const createdAt = goal.createdAt instanceof Date ? goal.createdAt : new Date(goal.createdAt);
@@ -24,11 +29,43 @@ export function selectDefaultCompanyGoalId(goals: Goal[]): string | null {
   );
 }
 
-export function buildOnboardingProjectPayload(goalId: string | null) {
+export function buildOnboardingProjectPayload(
+  goalId: string | null,
+  options?: {
+    name?: string | null;
+    mode?: "company" | "codebase";
+    workspaceLocalPath?: string;
+    workspaceRepoUrl?: string;
+  },
+) {
+  const mode = options?.mode ?? "company";
+  const workspaceLocalPath = options?.workspaceLocalPath?.trim() ?? "";
+  const workspaceRepoUrl = options?.workspaceRepoUrl?.trim() ?? "";
+  const workspaceName = workspaceLocalPath
+    ? deriveWorkspaceNameFromPath(workspaceLocalPath)
+    : workspaceRepoUrl
+      ? deriveWorkspaceNameFromRepo(workspaceRepoUrl)
+      : CODEBASE_ONBOARDING_PROJECT_NAME;
+  const name =
+    options?.name?.trim()
+    || (mode === "codebase" ? workspaceName : ONBOARDING_PROJECT_NAME);
   return {
-    name: ONBOARDING_PROJECT_NAME,
+    name,
     status: "in_progress" as const,
     ...(goalId ? { goalIds: [goalId] } : {}),
+    ...(
+      workspaceLocalPath || workspaceRepoUrl
+        ? {
+            workspace: {
+              name: workspaceName,
+              isPrimary: true,
+              sourceType: workspaceRepoUrl ? "git_repo" : "local_path",
+              ...(workspaceLocalPath ? { cwd: workspaceLocalPath } : {}),
+              ...(workspaceRepoUrl ? { repoUrl: workspaceRepoUrl } : {}),
+            },
+          }
+        : {}
+    ),
   };
 }
 

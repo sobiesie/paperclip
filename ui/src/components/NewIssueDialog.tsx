@@ -53,6 +53,12 @@ import { issueStatusText, issueStatusTextDefault, priorityColor, priorityColorDe
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
 import { AgentIcon } from "./AgentIconPicker";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
+import {
+  CODING_ISSUE_TEMPLATE_OPTIONS,
+  buildCodingIssueTemplateSeed,
+  getCodingIssueTemplateOption,
+  type CodingIssueTemplateId,
+} from "../lib/coding-issue-templates";
 
 const DRAFT_KEY = "paperclip:issue-draft";
 const DEBOUNCE_MS = 800;
@@ -301,9 +307,11 @@ export function NewIssueDialog() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [companyOpen, setCompanyOpen] = useState(false);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
+  const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
   const stageFileInputRef = useRef<HTMLInputElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<CodingIssueTemplateId | null>(null);
 
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(effectiveCompanyId!),
@@ -503,6 +511,7 @@ export function NewIssueDialog() {
   useEffect(() => {
     if (!newIssueOpen) return;
     setDialogCompanyId(selectedCompanyId);
+    setSelectedTemplateId(null);
     executionWorkspaceDefaultProjectId.current = null;
 
     const draft = loadDraft();
@@ -594,6 +603,7 @@ export function NewIssueDialog() {
     setDescription("");
     setStatus("todo");
     setPriority("");
+    setSelectedTemplateId(null);
     setAssigneeValue("");
     setProjectId("");
     setProjectWorkspaceId("");
@@ -628,6 +638,19 @@ export function NewIssueDialog() {
     clearDraft();
     reset();
     closeNewIssue();
+  }
+
+  function applyCodingTemplate(templateId: CodingIssueTemplateId) {
+    const seed = buildCodingIssueTemplateSeed(templateId);
+    setSelectedTemplateId(templateId);
+    setTitle(seed.title);
+    setDescription(seed.description);
+    setStatus(seed.status);
+    setPriority(seed.priority);
+    requestAnimationFrame(() => {
+      titleInputRef.current?.focus();
+      titleInputRef.current?.setSelectionRange(0, titleInputRef.current.value.length);
+    });
   }
 
   function handleSubmit() {
@@ -744,6 +767,7 @@ export function NewIssueDialog() {
   }
 
   const hasDraft = title.trim().length > 0 || description.trim().length > 0 || stagedFiles.length > 0;
+  const selectedTemplate = selectedTemplateId ? getCodingIssueTemplateOption(selectedTemplateId) : null;
   const currentStatus = statuses.find((s) => s.value === status) ?? statuses[1]!;
   const currentPriority = priorities.find((p) => p.value === priority);
   const currentAssignee = selectedAssigneeAgentId
@@ -978,6 +1002,7 @@ export function NewIssueDialog() {
         {/* Title */}
         <div className="px-4 pt-4 pb-2 shrink-0">
           <textarea
+            ref={titleInputRef}
             className="w-full text-lg font-semibold bg-transparent outline-none resize-none overflow-hidden placeholder:text-muted-foreground/50"
             placeholder="Issue title"
             rows={1}
@@ -1014,6 +1039,37 @@ export function NewIssueDialog() {
             }}
             autoFocus
           />
+        </div>
+
+        <div className="px-4 pb-2 shrink-0">
+          <div className="rounded-md border border-border bg-muted/20 px-3 py-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Coding templates
+              </span>
+              {CODING_ISSUE_TEMPLATE_OPTIONS.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={cn(
+                    "rounded-full border px-2 py-0.5 text-[11px] transition-colors",
+                    selectedTemplateId === option.id
+                      ? "border-foreground/20 bg-foreground text-background"
+                      : "border-border bg-background hover:bg-accent/60",
+                  )}
+                  onClick={() => applyCodingTemplate(option.id)}
+                  disabled={createIssue.isPending}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              {selectedTemplate
+                ? selectedTemplate.description
+                : "Apply a starter template for refactors, review, fix loops, or parallel implementation."}
+            </p>
+          </div>
         </div>
 
         <div className="px-4 pb-2 shrink-0">

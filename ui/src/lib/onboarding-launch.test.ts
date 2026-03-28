@@ -89,6 +89,12 @@ describe("onboarding launch payloads", () => {
       goalIds: ["goal-1"],
     });
 
+    expect(buildOnboardingProjectPayload("goal-1", { name: "Codebase Work" })).toEqual({
+      name: "Codebase Work",
+      status: "in_progress",
+      goalIds: ["goal-1"],
+    });
+
     expect(
       buildOnboardingIssuePayload({
         title: "  Hire your first engineer  ",
@@ -113,6 +119,11 @@ describe("onboarding launch payloads", () => {
       status: "in_progress",
     });
 
+    expect(buildOnboardingProjectPayload(null, { name: "  Engineering  " })).toEqual({
+      name: "Engineering",
+      status: "in_progress",
+    });
+
     expect(
       buildOnboardingIssuePayload({
         title: "Task",
@@ -126,6 +137,27 @@ describe("onboarding launch payloads", () => {
       assigneeAgentId: "agent-1",
       projectId: "project-1",
       status: "todo",
+    });
+  });
+
+  it("builds a codebase-first project with a primary workspace", () => {
+    expect(
+      buildOnboardingProjectPayload("goal-1", {
+        mode: "codebase",
+        workspaceLocalPath: "/Users/me/src/paperclip",
+        workspaceRepoUrl: "https://github.com/paperclipai/paperclip",
+      }),
+    ).toEqual({
+      name: "paperclip",
+      status: "in_progress",
+      goalIds: ["goal-1"],
+      workspace: {
+        name: "paperclip",
+        isPrimary: true,
+        sourceType: "git_repo",
+        cwd: "/Users/me/src/paperclip",
+        repoUrl: "https://github.com/paperclipai/paperclip",
+      },
     });
   });
 });

@@ -31,6 +31,20 @@ import {
   selectDefaultCompanyGoalId
 } from "../lib/onboarding-launch";
 import {
+  getOnboardingModeDefaults,
+  getOnboardingTaskTemplate,
+  listOnboardingTaskTemplates,
+  type OnboardingMode,
+  type OnboardingTaskTemplate,
+  type OnboardingTaskTemplateId,
+} from "../lib/onboarding-presets";
+import {
+  deriveWorkspaceNameFromPath,
+  deriveWorkspaceNameFromRepo,
+  isAbsoluteLocalPath,
+  isGitHubRepoUrl,
+} from "../lib/project-workspace-input";
+import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL
 } from "@paperclipai/adapter-codex-local";
@@ -39,6 +53,7 @@ import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
 import { resolveRouteOnboardingOptions } from "../lib/onboarding-route";
 import { AsciiArtAnimation } from "./AsciiArtAnimation";
 import { OpenCodeLogoIcon } from "./OpenCodeLogoIcon";
+import { ChoosePathButton } from "./PathInstructionsModal";
 import {
   Building2,
   Bot,
@@ -68,11 +83,11 @@ type AdapterType =
   | "http"
   | "openclaw_gateway";
 
-const DEFAULT_TASK_DESCRIPTION = `You are the CEO. You set the direction for the company.
-
-- hire a founding engineer
-- write a hiring plan
-- break the roadmap into concrete tasks and start delegating work`;
+const COMPANY_ONBOARDING_DEFAULTS = getOnboardingModeDefaults("company");
+const COMPANY_ONBOARDING_TASK_TEMPLATE = getOnboardingTaskTemplate(
+  "company",
+  COMPANY_ONBOARDING_DEFAULTS.defaultTaskTemplateId,
+);
 
 export function OnboardingWizard() {
   const { onboardingOpen, onboardingOptions, closeOnboarding } = useDialog();
@@ -105,15 +120,23 @@ export function OnboardingWizard() {
   const [error, setError] = useState<string | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
+  const [onboardingMode, setOnboardingMode] =
+    useState<OnboardingMode>("company");
 
   // Step 1
   const [companyName, setCompanyName] = useState("");
   const [companyGoal, setCompanyGoal] = useState("");
+  const [workspaceLocalPath, setWorkspaceLocalPath] = useState("");
+  const [workspaceRepoUrl, setWorkspaceRepoUrl] = useState("");
 
   // Step 2
-  const [agentName, setAgentName] = useState("CEO");
-  const [adapterType, setAdapterType] = useState<AdapterType>("claude_local");
-  const [model, setModel] = useState("");
+  const [agentName, setAgentName] = useState(
+    COMPANY_ONBOARDING_DEFAULTS.agentName
+  );
+  const [adapterType, setAdapterType] = useState<AdapterType>(
+    COMPANY_ONBOARDING_DEFAULTS.adapterType
+  );
+  const [model, setModel] = useState(COMPANY_ONBOARDING_DEFAULTS.model);
   const [command, setCommand] = useState("");
   const [args, setArgs] = useState("");
   const [url, setUrl] = useState("");
@@ -127,11 +150,14 @@ export function OnboardingWizard() {
   const [showMoreAdapters, setShowMoreAdapters] = useState(false);
 
   // Step 3
+  const [taskTemplateId, setTaskTemplateId] = useState<OnboardingTaskTemplateId>(
+    COMPANY_ONBOARDING_DEFAULTS.defaultTaskTemplateId
+  );
   const [taskTitle, setTaskTitle] = useState(
-    "Hire your first engineer and create a hiring plan"
+    COMPANY_ONBOARDING_TASK_TEMPLATE.title
   );
   const [taskDescription, setTaskDescription] = useState(
-    DEFAULT_TASK_DESCRIPTION
+    COMPANY_ONBOARDING_TASK_TEMPLATE.description
   );
 
   // Auto-grow textarea for task description
@@ -168,6 +194,20 @@ export function OnboardingWizard() {
     if (!effectiveOnboardingOpen) return;
     const cId = effectiveOnboardingOptions.companyId ?? null;
     setStep(effectiveOnboardingOptions.initialStep ?? 1);
+    setOnboardingMode("company");
+    setAgentName(COMPANY_ONBOARDING_DEFAULTS.agentName);
+    setAdapterType(COMPANY_ONBOARDING_DEFAULTS.adapterType);
+    setModel(COMPANY_ONBOARDING_DEFAULTS.model);
+    setCommand("");
+    setArgs("");
+    setUrl("");
+    setShowMoreAdapters(false);
+    setAdapterEnvResult(null);
+    setAdapterEnvError(null);
+    setForceUnsetAnthropicApiKey(false);
+    setTaskTemplateId(COMPANY_ONBOARDING_DEFAULTS.defaultTaskTemplateId);
+    setTaskTitle(COMPANY_ONBOARDING_TASK_TEMPLATE.title);
+    setTaskDescription(COMPANY_ONBOARDING_TASK_TEMPLATE.description);
     setCreatedCompanyId(cId);
     setCreatedCompanyPrefix(null);
     setCreatedCompanyGoalId(null);
@@ -177,7 +217,7 @@ export function OnboardingWizard() {
   }, [
     effectiveOnboardingOpen,
     effectiveOnboardingOptions.companyId,
-    effectiveOnboardingOptions.initialStep
+    effectiveOnboardingOptions.initialStep,
   ]);
 
   // Backfill issue prefix for an existing company once companies are loaded.
@@ -186,6 +226,12 @@ export function OnboardingWizard() {
     const company = companies.find((c) => c.id === createdCompanyId);
     if (company) setCreatedCompanyPrefix(company.issuePrefix);
   }, [effectiveOnboardingOpen, createdCompanyId, createdCompanyPrefix, companies]);
+
+  useEffect(() => {
+    if (!effectiveOnboardingOpen || !createdCompanyId || companyName.trim()) return;
+    const company = companies.find((entry) => entry.id === createdCompanyId);
+    if (company) setCompanyName(company.name);
+  }, [effectiveOnboardingOpen, createdCompanyId, companyName, companies]);
 
   // Resize textarea when step 3 is shown or description changes
   useEffect(() => {
@@ -277,25 +323,45 @@ export function OnboardingWizard() {
       }));
   }, [filteredModels, adapterType]);
 
+  const isCodebaseMode = onboardingMode === "codebase";
+  const onboardingModeDefaults = getOnboardingModeDefaults(onboardingMode);
+  const taskTemplates = listOnboardingTaskTemplates(onboardingMode);
+
+  const applyOnboardingMode = useCallback((mode: OnboardingMode) => {
+    const defaults = getOnboardingModeDefaults(mode);
+    const taskTemplate = getOnboardingTaskTemplate(
+      mode,
+      defaults.defaultTaskTemplateId
+    );
+    setOnboardingMode(mode);
+    setAgentName(defaults.agentName);
+    setAdapterType(defaults.adapterType);
+    setModel(defaults.model);
+    setCommand("");
+    setArgs("");
+    setUrl("");
+    setAdapterEnvResult(null);
+    setAdapterEnvError(null);
+    setForceUnsetAnthropicApiKey(false);
+    setShowMoreAdapters(false);
+    setTaskTemplateId(taskTemplate.id);
+    setTaskTitle(taskTemplate.title);
+    setTaskDescription(taskTemplate.description);
+    if (mode === "company") {
+      setWorkspaceLocalPath("");
+      setWorkspaceRepoUrl("");
+    }
+  }, []);
+
   function reset() {
     setStep(1);
     setLoading(false);
     setError(null);
     setCompanyName("");
     setCompanyGoal("");
-    setAgentName("CEO");
-    setAdapterType("claude_local");
-    setModel("");
-    setCommand("");
-    setArgs("");
-    setUrl("");
-    setAdapterEnvResult(null);
-    setAdapterEnvError(null);
     setAdapterEnvLoading(false);
-    setForceUnsetAnthropicApiKey(false);
     setUnsetAnthropicLoading(false);
-    setTaskTitle("Hire your first engineer and create a hiring plan");
-    setTaskDescription(DEFAULT_TASK_DESCRIPTION);
+    applyOnboardingMode("company");
     setCreatedCompanyId(null);
     setCreatedCompanyPrefix(null);
     setCreatedCompanyGoalId(null);
@@ -377,6 +443,23 @@ export function OnboardingWizard() {
   }
 
   async function handleStep1Next() {
+    if (isCodebaseMode) {
+      const localPath = workspaceLocalPath.trim();
+      const repoUrl = workspaceRepoUrl.trim();
+      if (!localPath && !repoUrl) {
+        setError("Codebase mode needs a local folder or GitHub repo URL.");
+        return;
+      }
+      if (localPath && !isAbsoluteLocalPath(localPath)) {
+        setError("Local folder must be a full absolute path.");
+        return;
+      }
+      if (repoUrl && !isGitHubRepoUrl(repoUrl)) {
+        setError("Repo must use a valid GitHub repo URL.");
+        return;
+      }
+    }
+
     setLoading(true);
     setError(null);
     try {
@@ -457,7 +540,16 @@ export function OnboardingWizard() {
 
       const agent = await agentsApi.create(createdCompanyId, {
         name: agentName.trim(),
-        role: "ceo",
+        role: onboardingModeDefaults.agentRole,
+        ...(onboardingModeDefaults.instructionPreset
+          ? { instructionPreset: onboardingModeDefaults.instructionPreset }
+          : {}),
+        ...(onboardingModeDefaults.agentTitle
+          ? { title: onboardingModeDefaults.agentTitle }
+          : {}),
+        ...(onboardingModeDefaults.agentCapabilities
+          ? { capabilities: onboardingModeDefaults.agentCapabilities }
+          : {}),
         adapterType,
         adapterConfig: buildAdapterConfig(),
         runtimeConfig: {
@@ -551,9 +643,19 @@ export function OnboardingWizard() {
 
       let projectId = createdProjectId;
       if (!projectId) {
+        const hasCodebaseTarget =
+          workspaceLocalPath.trim().length > 0 || workspaceRepoUrl.trim().length > 0;
         const project = await projectsApi.create(
           createdCompanyId,
-          buildOnboardingProjectPayload(goalId)
+          buildOnboardingProjectPayload(goalId, {
+            name:
+              isCodebaseMode && hasCodebaseTarget
+                ? null
+                : onboardingModeDefaults.projectName,
+            mode: onboardingMode,
+            workspaceLocalPath,
+            workspaceRepoUrl,
+          })
         );
         projectId = project.id;
         setCreatedProjectId(projectId);
@@ -606,6 +708,21 @@ export function OnboardingWizard() {
     }
   }
 
+  const stepItems = 
+    isCodebaseMode
+      ? [
+          { step: 1 as Step, label: "Workspace", icon: Code },
+          { step: 2 as Step, label: "Builder", icon: Bot },
+          { step: 3 as Step, label: "Change", icon: ListTodo },
+          { step: 4 as Step, label: "Launch", icon: Rocket }
+        ]
+      : [
+          { step: 1 as Step, label: "Company", icon: Building2 },
+          { step: 2 as Step, label: "Agent", icon: Bot },
+          { step: 3 as Step, label: "Task", icon: ListTodo },
+          { step: 4 as Step, label: "Launch", icon: Rocket }
+        ];
+
   if (!effectiveOnboardingOpen) return null;
 
   return (
@@ -643,14 +760,7 @@ export function OnboardingWizard() {
             <div className="w-full max-w-md mx-auto my-auto px-8 py-12 shrink-0">
               {/* Progress tabs */}
               <div className="flex items-center gap-0 mb-8 border-b border-border">
-                {(
-                  [
-                    { step: 1 as Step, label: "Company", icon: Building2 },
-                    { step: 2 as Step, label: "Agent", icon: Bot },
-                    { step: 3 as Step, label: "Task", icon: ListTodo },
-                    { step: 4 as Step, label: "Launch", icon: Rocket }
-                  ] as const
-                ).map(({ step: s, label, icon: Icon }) => (
+                {stepItems.map(({ step: s, label, icon: Icon }) => (
                   <button
                     key={s}
                     type="button"
@@ -668,17 +778,62 @@ export function OnboardingWizard() {
                 ))}
               </div>
 
+              <div className="mb-6">
+                <p className="mb-2 text-xs font-medium text-muted-foreground">
+                  Onboarding path
+                </p>
+                <div className="inline-flex rounded-md border border-border p-1">
+                  {[
+                    {
+                      id: "company" as OnboardingMode,
+                      label: "Company",
+                      icon: Building2,
+                    },
+                    {
+                      id: "codebase" as OnboardingMode,
+                      label: "Codebase",
+                      icon: Code,
+                    },
+                  ].map(({ id, label, icon: Icon }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => applyOnboardingMode(id)}
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium transition-colors",
+                        onboardingMode === id
+                          ? "bg-foreground text-background"
+                          : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                      )}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Step content */}
               {step === 1 && (
                 <div className="space-y-5">
                   <div className="flex items-center gap-3 mb-1">
                     <div className="bg-muted/50 p-2">
-                      <Building2 className="h-5 w-5 text-muted-foreground" />
+                      {isCodebaseMode ? (
+                        <Code className="h-5 w-5 text-muted-foreground" />
+                      ) : (
+                        <Building2 className="h-5 w-5 text-muted-foreground" />
+                      )}
                     </div>
                     <div>
-                      <h3 className="font-medium">Name your company</h3>
+                      <h3 className="font-medium">
+                        {isCodebaseMode
+                          ? "Name your codebase workspace"
+                          : "Name your company"}
+                      </h3>
                       <p className="text-xs text-muted-foreground">
-                        This is the organization your agents will work for.
+                        {isCodebaseMode
+                          ? "This is the workspace your coding agents will work against."
+                          : "This is the organization your agents will work for."}
                       </p>
                     </div>
                   </div>
@@ -691,11 +846,11 @@ export function OnboardingWizard() {
                           : "text-muted-foreground group-focus-within:text-foreground"
                       )}
                     >
-                      Company name
+                      {isCodebaseMode ? "Workspace / codebase name" : "Company name"}
                     </label>
                     <input
                       className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50"
-                      placeholder="Acme Corp"
+                      placeholder={isCodebaseMode ? "payments-api" : "Acme Corp"}
                       value={companyName}
                       onChange={(e) => setCompanyName(e.target.value)}
                       autoFocus
@@ -710,15 +865,67 @@ export function OnboardingWizard() {
                           : "text-muted-foreground group-focus-within:text-foreground"
                       )}
                     >
-                      Mission / goal (optional)
+                      {isCodebaseMode
+                        ? "Outcome / goal (optional)"
+                        : "Mission / goal (optional)"}
                     </label>
                     <textarea
                       className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50 resize-none min-h-[60px]"
-                      placeholder="What is this company trying to achieve?"
+                      placeholder={
+                        isCodebaseMode
+                          ? "What should this codebase improve or ship next?"
+                          : "What is this company trying to achieve?"
+                      }
                       value={companyGoal}
                       onChange={(e) => setCompanyGoal(e.target.value)}
                     />
                   </div>
+                  {isCodebaseMode && (
+                    <div className="space-y-3">
+                      <div className="group">
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <label
+                            className={cn(
+                              "text-xs transition-colors",
+                              workspaceLocalPath.trim()
+                                ? "text-foreground"
+                                : "text-muted-foreground group-focus-within:text-foreground"
+                            )}
+                          >
+                            Local folder
+                          </label>
+                          <ChoosePathButton />
+                        </div>
+                        <input
+                          className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm font-mono outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50"
+                          placeholder="/Users/you/src/repo"
+                          value={workspaceLocalPath}
+                          onChange={(e) => setWorkspaceLocalPath(e.target.value)}
+                        />
+                      </div>
+                      <div className="group">
+                        <label
+                          className={cn(
+                            "text-xs mb-1 block transition-colors",
+                            workspaceRepoUrl.trim()
+                              ? "text-foreground"
+                              : "text-muted-foreground group-focus-within:text-foreground"
+                          )}
+                        >
+                          GitHub repo URL
+                        </label>
+                        <input
+                          className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm font-mono outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50"
+                          placeholder="https://github.com/owner/repo"
+                          value={workspaceRepoUrl}
+                          onChange={(e) => setWorkspaceRepoUrl(e.target.value)}
+                        />
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        Add a local folder, a GitHub repo URL, or both. Paperclip will seed the first project against this codebase.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -729,9 +936,15 @@ export function OnboardingWizard() {
                       <Bot className="h-5 w-5 text-muted-foreground" />
                     </div>
                     <div>
-                      <h3 className="font-medium">Create your first agent</h3>
+                      <h3 className="font-medium">
+                        {isCodebaseMode
+                          ? "Create your first coding agent"
+                          : "Create your first agent"}
+                      </h3>
                       <p className="text-xs text-muted-foreground">
-                        Choose how this agent will run tasks.
+                        {isCodebaseMode
+                          ? "Start with a builder and choose how it will work through code changes."
+                          : "Choose how this agent will run tasks."}
                       </p>
                     </div>
                   </div>
@@ -741,7 +954,7 @@ export function OnboardingWizard() {
                     </label>
                     <input
                       className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50"
-                      placeholder="CEO"
+                      placeholder={isCodebaseMode ? "Builder" : "CEO"}
                       value={agentName}
                       onChange={(e) => setAgentName(e.target.value)}
                       autoFocus
@@ -1050,7 +1263,7 @@ export function OnboardingWizard() {
                           <p className="text-[11px] text-amber-900/90 leading-relaxed">
                             Claude failed while{" "}
                             <span className="font-mono">ANTHROPIC_API_KEY</span>{" "}
-                            is set. You can clear it in this CEO adapter config
+                            is set. You can clear it in this agent adapter config
                             and retry the probe.
                           </p>
                           <Button
@@ -1154,20 +1367,60 @@ export function OnboardingWizard() {
                       <ListTodo className="h-5 w-5 text-muted-foreground" />
                     </div>
                     <div>
-                      <h3 className="font-medium">Give it something to do</h3>
+                      <h3 className="font-medium">
+                        {isCodebaseMode
+                          ? "Start with a coding loop"
+                          : "Give it something to do"}
+                      </h3>
                       <p className="text-xs text-muted-foreground">
-                        Give your agent a small task to start with — a bug fix,
-                        a research question, writing a script.
+                        {isCodebaseMode
+                          ? "Seed the first change with a starter template, then tweak the prompt if you want."
+                          : "Give your agent a small task to start with - a bug fix, a research question, writing a script."}
                       </p>
                     </div>
                   </div>
+                  {isCodebaseMode && (
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-2 block">
+                        Starter template
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {taskTemplates.map((template: OnboardingTaskTemplate) => (
+                          <button
+                            key={template.id}
+                            type="button"
+                            className={cn(
+                              "rounded-md border p-3 text-left transition-colors",
+                              taskTemplateId === template.id
+                                ? "border-foreground bg-accent"
+                                : "border-border hover:bg-accent/50"
+                            )}
+                            onClick={() => {
+                              setTaskTemplateId(template.id);
+                              setTaskTitle(template.title);
+                              setTaskDescription(template.description);
+                            }}
+                          >
+                            <p className="text-sm font-medium">{template.label}</p>
+                            <p className="mt-1 text-[11px] text-muted-foreground">
+                              {template.summary}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">
-                      Task title
+                      {isCodebaseMode ? "Change title" : "Task title"}
                     </label>
                     <input
                       className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50"
-                      placeholder="e.g. Research competitor pricing"
+                      placeholder={
+                        isCodebaseMode
+                          ? "e.g. Refactor the auth flow safely"
+                          : "e.g. Research competitor pricing"
+                      }
                       value={taskTitle}
                       onChange={(e) => setTaskTitle(e.target.value)}
                       autoFocus
@@ -1180,7 +1433,11 @@ export function OnboardingWizard() {
                     <textarea
                       ref={textareaRef}
                       className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50 resize-none min-h-[120px] max-h-[300px] overflow-y-auto"
-                      placeholder="Add more detail about what the agent should do..."
+                      placeholder={
+                        isCodebaseMode
+                          ? "Add any repo-specific context, constraints, or review expectations..."
+                          : "Add more detail about what the agent should do..."
+                      }
                       value={taskDescription}
                       onChange={(e) => setTaskDescription(e.target.value)}
                     />
@@ -1197,8 +1454,9 @@ export function OnboardingWizard() {
                     <div>
                       <h3 className="font-medium">Ready to launch</h3>
                       <p className="text-xs text-muted-foreground">
-                        Everything is set up. Launching now will create the
-                        starter task, wake the agent, and open the issue.
+                        {isCodebaseMode
+                          ? "Everything is set up. Launching now will create the starter change, wake the builder, and open the issue."
+                          : "Everything is set up. Launching now will create the starter task, wake the agent, and open the issue."}
                       </p>
                     </div>
                   </div>
@@ -1209,10 +1467,29 @@ export function OnboardingWizard() {
                         <p className="text-sm font-medium truncate">
                           {companyName}
                         </p>
-                        <p className="text-xs text-muted-foreground">Company</p>
+                        <p className="text-xs text-muted-foreground">
+                          {isCodebaseMode ? "Workspace" : "Company"}
+                        </p>
                       </div>
                       <Check className="h-4 w-4 text-green-500 shrink-0" />
                     </div>
+                    {isCodebaseMode &&
+                    (workspaceLocalPath.trim() || workspaceRepoUrl.trim()) ? (
+                      <div className="flex items-center gap-3 px-3 py-2.5">
+                        <Code className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">
+                            {workspaceLocalPath.trim()
+                              ? deriveWorkspaceNameFromPath(workspaceLocalPath)
+                              : deriveWorkspaceNameFromRepo(workspaceRepoUrl)}
+                          </p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {workspaceLocalPath.trim() || workspaceRepoUrl.trim()}
+                          </p>
+                        </div>
+                        <Check className="h-4 w-4 text-green-500 shrink-0" />
+                      </div>
+                    ) : null}
                     <div className="flex items-center gap-3 px-3 py-2.5">
                       <Bot className="h-4 w-4 text-muted-foreground shrink-0" />
                       <div className="flex-1 min-w-0">
@@ -1220,7 +1497,9 @@ export function OnboardingWizard() {
                           {agentName}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          {getUIAdapter(adapterType).label}
+                          {isCodebaseMode
+                            ? `${getUIAdapter(adapterType).label} builder`
+                            : getUIAdapter(adapterType).label}
                         </p>
                       </div>
                       <Check className="h-4 w-4 text-green-500 shrink-0" />
@@ -1231,7 +1510,9 @@ export function OnboardingWizard() {
                         <p className="text-sm font-medium truncate">
                           {taskTitle}
                         </p>
-                        <p className="text-xs text-muted-foreground">Task</p>
+                        <p className="text-xs text-muted-foreground">
+                          {isCodebaseMode ? "Change" : "Task"}
+                        </p>
                       </div>
                       <Check className="h-4 w-4 text-green-500 shrink-0" />
                     </div>
@@ -1313,7 +1594,11 @@ export function OnboardingWizard() {
                       ) : (
                         <ArrowRight className="h-3.5 w-3.5 mr-1" />
                       )}
-                      {loading ? "Creating..." : "Create & Open Issue"}
+                      {loading
+                        ? "Creating..."
+                        : isCodebaseMode
+                          ? "Create & Open Change"
+                          : "Create & Open Issue"}
                     </Button>
                   )}
                 </div>

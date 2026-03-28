@@ -13,7 +13,11 @@ The first implementation slices are now underway in the product:
 - projects can now declare reviewer and fixer routing so `review` can hand work to a reviewer agent and `fix` can route changes back to a builder or dedicated fixer
 - issue detail now shows a coding workflow card with builder / reviewer / fixer visibility, linked outputs, and one-click workflow transitions
 - issue rows and inbox surfaces now badge coding workflow state so review and fix loops are scannable at a glance
+- onboarding now includes an explicit codebase path that seeds coding-builder defaults, codebase-oriented starter project naming, and starter templates for refactor, review, fix-from-review, and parallel implementation loops
 - pull request work-product review-state changes now feed the same coding workflow loop, so external PR sync can move issues into review, request fixes, or mark approval without relying on a manual comment first
+- a first-party GitHub coding-sync example plugin now indexes tracked pull requests from `issue.work_product_*` events and translates `pull_request` / `pull_request_review` webhooks into work-product updates that drive the same review-fix loop automatically
+- onboarding can now start in either company mode or codebase mode, with codebase onboarding defaulting to a coding-builder setup and coding-first launch copy
+- new issue creation now includes coding starter templates for refactor, review, fix-review-findings, and parallel implementation flows
 
 That means the repo now has a real foundation for the loop this investigation described:
 
