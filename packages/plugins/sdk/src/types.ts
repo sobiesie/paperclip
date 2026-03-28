@@ -21,6 +21,9 @@ import type {
   IssueComment,
   IssueDocument,
   IssueDocumentSummary,
+  IssueWorkProduct,
+  CreateIssueWorkProduct,
+  UpdateIssueWorkProduct,
   Agent,
   Goal,
 } from "@paperclipai/shared";
@@ -65,6 +68,9 @@ export type {
   IssueComment,
   IssueDocument,
   IssueDocumentSummary,
+  IssueWorkProduct,
+  CreateIssueWorkProduct,
+  UpdateIssueWorkProduct,
   Agent,
   Goal,
 } from "@paperclipai/shared";
@@ -854,6 +860,8 @@ export interface PluginIssueDocumentsClient {
  * - `issues.update` for update
  * - `issue.comments.read` for `listComments`
  * - `issue.comments.create` for `createComment`
+ * - `issues.read` for `workProducts.list`
+ * - `issues.update` for `workProducts.create`, `workProducts.update`, and `workProducts.delete`
  * - `issue.documents.read` for `documents.list` and `documents.get`
  * - `issue.documents.write` for `documents.upsert` and `documents.delete`
  */
@@ -887,6 +895,12 @@ export interface PluginIssuesClient {
   ): Promise<Issue>;
   listComments(issueId: string, companyId: string): Promise<IssueComment[]>;
   createComment(issueId: string, body: string, companyId: string): Promise<IssueComment>;
+  workProducts: {
+    list(issueId: string, companyId: string): Promise<IssueWorkProduct[]>;
+    create(issueId: string, input: CreateIssueWorkProduct, companyId: string): Promise<IssueWorkProduct>;
+    update(workProductId: string, patch: UpdateIssueWorkProduct, companyId: string): Promise<IssueWorkProduct>;
+    delete(workProductId: string, companyId: string): Promise<IssueWorkProduct>;
+  };
   /** Read and write issue documents. Requires `issue.documents.read` / `issue.documents.write`. */
   documents: PluginIssueDocumentsClient;
 }

@@ -104,6 +104,8 @@ runWorker(plugin, import.meta.url);
 
 **Agents:** `ctx.agents.invoke(agentId, companyId, opts)` for one-shot invocation. `ctx.agents.sessions` for two-way chat: `create`, `list`, `sendMessage` (with streaming `onEvent` callback), `close`. See the [Plugin Authoring Guide](../../doc/plugins/PLUGIN_AUTHORING_GUIDE.md#agent-sessions-two-way-chat) for details.
 
+**Issue work products:** `ctx.issues.workProducts.list/create/update/delete` lets plugins sync PRs, branches, previews, and similar outputs against an issue. Reads require `issues.read`; create/update/delete require `issues.update`. Work-product status changes reuse the host’s coding workflow automation, so updating a PR to `ready_for_review`, `changes_requested`, or `approved` can advance the linked issue automatically.
+
 **Jobs:** Declare in `manifest.jobs` with `jobKey`, `displayName`, `schedule` (cron). Register handler with `ctx.jobs.register(jobKey, fn)`. **Webhooks:** Declare in `manifest.webhooks` with `endpointKey`; handle in `onWebhook(input)`. **State:** `ctx.state.get/set/delete(scopeKey)`; scope kinds: `instance`, `company`, `project`, `project_workspace`, `agent`, `issue`, `goal`, `run`.
 
 ## Events

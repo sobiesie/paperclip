@@ -27,6 +27,9 @@ import type {
   IssueComment,
   IssueDocument,
   IssueDocumentSummary,
+  IssueWorkProduct,
+  CreateIssueWorkProduct,
+  UpdateIssueWorkProduct,
   Agent,
   Goal,
 } from "@paperclipai/shared";
@@ -601,6 +604,22 @@ export interface WorkerToHostMethods {
   "issues.createComment": [
     params: { issueId: string; body: string; companyId: string },
     result: IssueComment,
+  ];
+  "issues.listWorkProducts": [
+    params: { issueId: string; companyId: string },
+    result: IssueWorkProduct[],
+  ];
+  "issues.createWorkProduct": [
+    params: { issueId: string; companyId: string; input: CreateIssueWorkProduct },
+    result: IssueWorkProduct,
+  ];
+  "issues.updateWorkProduct": [
+    params: { workProductId: string; companyId: string; patch: UpdateIssueWorkProduct },
+    result: IssueWorkProduct,
+  ];
+  "issues.deleteWorkProduct": [
+    params: { workProductId: string; companyId: string },
+    result: IssueWorkProduct,
   ];
 
   // Issue Documents

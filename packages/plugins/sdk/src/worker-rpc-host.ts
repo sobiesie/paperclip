@@ -613,6 +613,24 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
           return callHost("issues.createComment", { issueId, body, companyId });
         },
 
+        workProducts: {
+          async list(issueId: string, companyId: string) {
+            return callHost("issues.listWorkProducts", { issueId, companyId });
+          },
+
+          async create(issueId: string, input, companyId: string) {
+            return callHost("issues.createWorkProduct", { issueId, input, companyId });
+          },
+
+          async update(workProductId: string, patch, companyId: string) {
+            return callHost("issues.updateWorkProduct", { workProductId, patch, companyId });
+          },
+
+          async delete(workProductId: string, companyId: string) {
+            return callHost("issues.deleteWorkProduct", { workProductId, companyId });
+          },
+        },
+
         documents: {
           async list(issueId: string, companyId: string) {
             return callHost("issues.documents.list", { issueId, companyId });

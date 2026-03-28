@@ -10,14 +10,11 @@ import {
   createIssueSchema,
   linkIssueApprovalSchema,
   issueDocumentKeySchema,
-  type IssueCodingWorkflowState,
   updateIssueWorkProductSchema,
   upsertIssueDocumentSchema,
   updateIssueSchema,
   type IssueCommentWorkflowAction,
-  type IssueStatus,
   type IssueWorkProduct,
-  type ProjectCodingWorkflowPolicy,
 } from "@paperclipai/shared";
 import type { StorageService } from "../storage/types.js";
 import { validate } from "../middleware/validate.js";
@@ -41,6 +38,15 @@ import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
+import {
+  type CommentWorkflowHandoff,
+  getCommentWorkflowIssueStatus,
+  getCommentWorkflowWakeReason,
+  inferWorkProductWorkflowAction,
+  isClosedIssueStatus,
+  resolveCommentWorkflowHandoff,
+  sameValue,
+} from "../services/issue-coding-workflow.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 const COMMENT_WORKFLOW_FALLBACK_TYPES = new Set<IssueWorkProduct["type"]>([
@@ -61,28 +67,6 @@ const COMMENT_WORKFLOW_COMMAND_ALIASES: Record<string, IssueCommentWorkflowActio
   "/resume": "continue",
   "/review": "request_review",
 };
-
-function isClosedIssueStatus(status: string) {
-  return status === "done" || status === "cancelled";
-}
-
-function getCommentWorkflowIssueStatus(
-  workflowAction: IssueCommentWorkflowAction | undefined,
-  currentStatus: string,
-): IssueStatus | null {
-  switch (workflowAction) {
-    case "continue":
-      return currentStatus === "in_review" || isClosedIssueStatus(currentStatus) ? "todo" : null;
-    case "request_review":
-      return currentStatus === "in_review" ? null : "in_review";
-    case "changes_requested":
-      return currentStatus === "todo" ? null : "todo";
-    case "approve":
-      return currentStatus === "done" ? null : "done";
-    default:
-      return null;
-  }
-}
 
 function getCommentWorkflowWorkProductPatch(
   workflowAction: IssueCommentWorkflowAction | undefined,
@@ -111,148 +95,10 @@ function selectCommentWorkflowWorkProducts(workProducts: IssueWorkProduct[]) {
   return workProducts.filter((workProduct) => COMMENT_WORKFLOW_FALLBACK_TYPES.has(workProduct.type));
 }
 
-function getCommentWorkflowWakeReason(workflowAction: IssueCommentWorkflowAction | undefined) {
-  switch (workflowAction) {
-    case "continue":
-      return "issue_continue_requested";
-    case "changes_requested":
-      return "issue_changes_requested";
-    default:
-      return null;
-  }
-}
-
-function sameValue(left: unknown, right: unknown) {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function parseIssueCodingWorkflowState(raw: unknown): IssueCodingWorkflowState | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const builderAgentId =
-    typeof (raw as Record<string, unknown>).builderAgentId === "string"
-      ? ((raw as Record<string, unknown>).builderAgentId as string)
-      : null;
-  const reviewerAgentId =
-    typeof (raw as Record<string, unknown>).reviewerAgentId === "string"
-      ? ((raw as Record<string, unknown>).reviewerAgentId as string)
-      : null;
-  if (!builderAgentId && !reviewerAgentId) return null;
-  return { builderAgentId, reviewerAgentId };
-}
-
-async function resolveAssignableAgentId(
-  companyId: string,
-  agentId: string | null | undefined,
-  agentsSvc: ReturnType<typeof agentService>,
-) {
-  if (!agentId) return null;
-  const agent = await agentsSvc.getById(agentId);
-  if (!agent || agent.companyId !== companyId) return null;
-  if (agent.status === "pending_approval" || agent.status === "terminated") return null;
-  return agent.id;
-}
-
-type CommentWorkflowHandoff = {
-  assigneeAgentId: string;
-  codingWorkflowState: IssueCodingWorkflowState;
-  wakeReason: string | null;
-  kind: "request_review" | "changes_requested" | "continue";
-};
-
-async function resolveCommentWorkflowHandoff(input: {
-  issue: {
-    companyId: string;
-    projectId: string | null;
-    assigneeAgentId: string | null;
-    codingWorkflowState?: IssueCodingWorkflowState | Record<string, unknown> | null;
-  };
-  workflowAction: IssueCommentWorkflowAction | undefined;
-  projectsSvc: ReturnType<typeof projectService>;
-  agentsSvc: ReturnType<typeof agentService>;
-}): Promise<CommentWorkflowHandoff | null> {
-  if (!input.issue.assigneeAgentId || !input.issue.projectId) return null;
-  if (
-    input.workflowAction !== "request_review" &&
-    input.workflowAction !== "changes_requested" &&
-    input.workflowAction !== "continue"
-  ) {
-    return null;
-  }
-
-  const project = await input.projectsSvc.getById(input.issue.projectId);
-  const policy = project?.executionWorkspacePolicy?.codingWorkflowPolicy as ProjectCodingWorkflowPolicy | null | undefined;
-  const currentState = parseIssueCodingWorkflowState(input.issue.codingWorkflowState);
-
-  if (input.workflowAction === "request_review") {
-    const reviewerAgentId = await resolveAssignableAgentId(
-      input.issue.companyId,
-      policy?.reviewerAgentId,
-      input.agentsSvc,
-    );
-    if (!reviewerAgentId || reviewerAgentId === input.issue.assigneeAgentId) return null;
-    return {
-      assigneeAgentId: reviewerAgentId,
-      codingWorkflowState: {
-        builderAgentId: input.issue.assigneeAgentId,
-        reviewerAgentId,
-      },
-      wakeReason: "issue_review_requested",
-      kind: "request_review",
-    };
-  }
-
-  const preferredFixerAgentId =
-    input.workflowAction === "changes_requested"
-      ? await resolveAssignableAgentId(
-        input.issue.companyId,
-        policy?.fixerAgentId,
-        input.agentsSvc,
-      )
-      : null;
-  const builderAgentId = await resolveAssignableAgentId(
-    input.issue.companyId,
-    currentState?.builderAgentId,
-    input.agentsSvc,
-  );
-  const nextAssigneeAgentId = preferredFixerAgentId ?? builderAgentId;
-  if (!nextAssigneeAgentId || nextAssigneeAgentId === input.issue.assigneeAgentId) return null;
-
-  return {
-    assigneeAgentId: nextAssigneeAgentId,
-    codingWorkflowState: {
-      builderAgentId: nextAssigneeAgentId,
-      reviewerAgentId: input.issue.assigneeAgentId,
-    },
-    wakeReason: null,
-    kind: input.workflowAction,
-  };
-}
-
 function inferCommentWorkflowAction(body: string): IssueCommentWorkflowAction | undefined {
   const match = body.trim().match(/^\/[a-z-]+/i);
   if (!match) return undefined;
   return COMMENT_WORKFLOW_COMMAND_ALIASES[match[0].toLowerCase()];
-}
-
-function inferWorkProductWorkflowAction(
-  previous: Pick<IssueWorkProduct, "type" | "status" | "reviewState">,
-  next: Pick<IssueWorkProduct, "type" | "status" | "reviewState">,
-): IssueCommentWorkflowAction | undefined {
-  if (next.type !== "pull_request") return undefined;
-
-  if (next.reviewState !== previous.reviewState) {
-    if (next.reviewState === "needs_board_review") return "request_review";
-    if (next.reviewState === "changes_requested") return "changes_requested";
-    if (next.reviewState === "approved") return "approve";
-  }
-
-  if (next.status !== previous.status) {
-    if (next.status === "ready_for_review") return "request_review";
-    if (next.status === "changes_requested") return "changes_requested";
-    if (next.status === "approved") return "approve";
-  }
-
-  return undefined;
 }
 
 export function issueRoutes(db: Db, storage: StorageService) {

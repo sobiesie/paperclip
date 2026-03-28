@@ -15,6 +15,7 @@ import { companyService } from "./companies.js";
 import { agentService } from "./agents.js";
 import { projectService } from "./projects.js";
 import { issueService } from "./issues.js";
+import { workProductService } from "./work-products.js";
 import { goalService } from "./goals.js";
 import { documentService } from "./documents.js";
 import { heartbeatService } from "./heartbeat.js";
@@ -28,6 +29,14 @@ import { pluginStateStore } from "./plugin-state-store.js";
 import { createPluginSecretsHandler } from "./plugin-secrets-handler.js";
 import { logActivity } from "./activity-log.js";
 import type { PluginEventBus } from "./plugin-event-bus.js";
+import {
+  getCommentWorkflowIssueStatus,
+  getCommentWorkflowWakeReason,
+  inferWorkProductWorkflowAction,
+  isClosedIssueStatus,
+  resolveCommentWorkflowHandoff,
+  sameValue,
+} from "./issue-coding-workflow.js";
 import { lookup as dnsLookup } from "node:dns/promises";
 import type { IncomingMessage, RequestOptions as HttpRequestOptions } from "node:http";
 import { request as httpRequest } from "node:http";
@@ -451,6 +460,7 @@ export function buildHostServices(
   const heartbeat = heartbeatService(db);
   const projects = projectService(db);
   const issues = issueService(db);
+  const workProducts = workProductService(db);
   const documents = documentService(db);
   const goals = goalService(db);
   const activity = activityService(db);
@@ -793,6 +803,189 @@ export function buildHostServices(
           params.body,
           {},
         )) as IssueComment;
+      },
+      async listWorkProducts(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        if (!inCompany(await issues.getById(params.issueId), companyId)) return [];
+        return await workProducts.listForIssue(params.issueId);
+      },
+      async createWorkProduct(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        const issue = requireInCompany("Issue", await issues.getById(params.issueId), companyId);
+        const product = await workProducts.createForIssue(params.issueId, companyId, {
+          ...params.input,
+          projectId: params.input.projectId ?? issue.projectId ?? null,
+        });
+        if (!product) {
+          throw new Error("Invalid work product payload");
+        }
+        await logActivity(db, {
+          companyId,
+          actorType: "system",
+          actorId: pluginId,
+          action: "issue.work_product_created",
+          entityType: "issue",
+          entityId: issue.id,
+          details: {
+            workProductId: product.id,
+            type: product.type,
+            provider: product.provider,
+            pluginKey,
+          },
+        });
+        return product;
+      },
+      async updateWorkProduct(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        const existing = requireInCompany("Work product", await workProducts.getById(params.workProductId), companyId);
+        const product = await workProducts.update(params.workProductId, params.patch as any);
+        if (!product) {
+          throw new Error("Work product not found");
+        }
+
+        const workflowAction = inferWorkProductWorkflowAction(existing, product);
+        const issue = workflowAction ? await issues.getById(existing.issueId) : null;
+        let currentIssue = issue && inCompany(issue, companyId) ? issue : null;
+        let workflowHandoff: Awaited<ReturnType<typeof resolveCommentWorkflowHandoff>> = null;
+
+        if (currentIssue && workflowAction) {
+          workflowHandoff = await resolveCommentWorkflowHandoff({
+            issue: currentIssue,
+            workflowAction,
+            projectsSvc: projects,
+            agentsSvc: agents,
+          });
+
+          const workflowIssuePatch: Record<string, unknown> = {};
+          const workflowStatus = getCommentWorkflowIssueStatus(workflowAction, currentIssue.status);
+          if (workflowStatus && workflowStatus !== currentIssue.status) {
+            workflowIssuePatch.status = workflowStatus;
+          }
+          if (workflowHandoff && workflowHandoff.assigneeAgentId !== currentIssue.assigneeAgentId) {
+            workflowIssuePatch.assigneeAgentId = workflowHandoff.assigneeAgentId;
+            workflowIssuePatch.assigneeUserId = null;
+            workflowIssuePatch.codingWorkflowState = workflowHandoff.codingWorkflowState;
+          }
+
+          if (Object.keys(workflowIssuePatch).length > 0) {
+            const updatedIssue = await issues.update(currentIssue.id, workflowIssuePatch as any);
+            if (updatedIssue) {
+              const previous: Record<string, unknown> = {};
+              for (const [key, value] of Object.entries(workflowIssuePatch)) {
+                const previousValue = (currentIssue as Record<string, unknown>)[key];
+                if (!sameValue(previousValue, value)) {
+                  previous[key] = previousValue;
+                }
+              }
+              const nextIssue = updatedIssue;
+              currentIssue = nextIssue;
+
+              await logActivity(db, {
+                companyId,
+                actorType: "system",
+                actorId: pluginId,
+                action: "issue.updated",
+                entityType: "issue",
+                entityId: nextIssue.id,
+                details: {
+                  ...("status" in workflowIssuePatch ? { status: nextIssue.status } : {}),
+                  ...("assigneeAgentId" in workflowIssuePatch
+                    ? { assigneeAgentId: nextIssue.assigneeAgentId, assigneeUserId: nextIssue.assigneeUserId }
+                    : {}),
+                  workflowAction,
+                  source: "work_product",
+                  workProductId: product.id,
+                  identifier: nextIssue.identifier,
+                  pluginKey,
+                  ...(workflowHandoff
+                    ? {
+                        codingWorkflowHandoff: workflowHandoff.kind,
+                        automatedAssigneeChange: true,
+                      }
+                    : {}),
+                  _previous: previous,
+                },
+              });
+            }
+          }
+        }
+
+        await logActivity(db, {
+          companyId,
+          actorType: "system",
+          actorId: pluginId,
+          action: "issue.work_product_updated",
+          entityType: "issue",
+          entityId: existing.issueId,
+          details: {
+            workProductId: product.id,
+            changedKeys: Object.keys(params.patch as Record<string, unknown>).sort(),
+            pluginKey,
+            ...(workflowAction ? { workflowAction, source: "work_product" } : {}),
+          },
+        });
+
+        const assigneeId = currentIssue?.assigneeAgentId ?? null;
+        const wakeReason = workflowHandoff?.wakeReason ?? getCommentWorkflowWakeReason(workflowAction);
+        if (currentIssue && assigneeId && wakeReason && !isClosedIssueStatus(currentIssue.status)) {
+          await heartbeat.wakeup(assigneeId, {
+            source: "automation",
+            triggerDetail: "system",
+            reason: wakeReason,
+            payload: {
+              issueId: currentIssue.id,
+              workProductId: product.id,
+              workflowAction,
+              mutation: "work_product",
+              pluginKey,
+              ...(workflowHandoff ? { codingWorkflowHandoff: workflowHandoff.kind } : {}),
+            },
+            requestedByActorType: "system",
+            requestedByActorId: pluginId,
+            contextSnapshot: {
+              issueId: currentIssue.id,
+              taskId: currentIssue.id,
+              workProductId: product.id,
+              source: `plugin.${pluginKey}.work_product.${workflowAction}`,
+              wakeReason,
+              workflowAction,
+              pluginKey,
+              ...(workflowHandoff ? { codingWorkflowHandoff: workflowHandoff.kind } : {}),
+            },
+          }).catch((err) =>
+            logger.warn(
+              { err, issueId: currentIssue.id, workProductId: product.id, workflowAction, pluginKey },
+              "failed to enqueue plugin-triggered wakeup after work product workflow update",
+            ));
+        }
+
+        return product;
+      },
+      async deleteWorkProduct(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        const existing = requireInCompany("Work product", await workProducts.getById(params.workProductId), companyId);
+        const removed = await workProducts.remove(params.workProductId);
+        if (!removed) {
+          throw new Error("Work product not found");
+        }
+        await logActivity(db, {
+          companyId,
+          actorType: "system",
+          actorId: pluginId,
+          action: "issue.work_product_deleted",
+          entityType: "issue",
+          entityId: existing.issueId,
+          details: {
+            workProductId: removed.id,
+            type: removed.type,
+            pluginKey,
+          },
+        });
+        return removed;
       },
     },
 

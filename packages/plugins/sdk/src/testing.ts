@@ -7,6 +7,7 @@ import type {
   Project,
   Issue,
   IssueComment,
+  IssueWorkProduct,
   Agent,
   Goal,
 } from "@paperclipai/shared";
@@ -50,6 +51,7 @@ export interface TestHarness {
     projects?: Project[];
     issues?: Issue[];
     issueComments?: IssueComment[];
+    issueWorkProducts?: IssueWorkProduct[];
     agents?: Agent[];
     goals?: Goal[];
   }): void;
@@ -140,6 +142,7 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
   const projects = new Map<string, Project>();
   const issues = new Map<string, Issue>();
   const issueComments = new Map<string, IssueComment[]>();
+  const issueWorkProducts = new Map<string, IssueWorkProduct>();
   const agents = new Map<string, Agent>();
   const goals = new Map<string, Goal>();
   const projectWorkspaces = new Map<string, PluginWorkspace[]>();
@@ -427,6 +430,107 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         issueComments.set(issueId, current);
         return comment;
       },
+      workProducts: {
+        async list(issueId, companyId) {
+          requireCapability(manifest, capabilitySet, "issues.read");
+          if (!isInCompany(issues.get(issueId), companyId)) return [];
+          return [...issueWorkProducts.values()]
+            .filter((product) => product.issueId === issueId && product.companyId === companyId)
+            .sort((left, right) => {
+              if (left.isPrimary !== right.isPrimary) return left.isPrimary ? -1 : 1;
+              return right.updatedAt.getTime() - left.updatedAt.getTime();
+            });
+        },
+        async create(issueId, input, companyId) {
+          requireCapability(manifest, capabilitySet, "issues.update");
+          const parentIssue = issues.get(issueId);
+          if (!isInCompany(parentIssue, companyId)) {
+            throw new Error(`Issue not found: ${issueId}`);
+          }
+          const now = new Date();
+          const record: IssueWorkProduct = {
+            id: randomUUID(),
+            companyId: parentIssue.companyId,
+            projectId: input.projectId ?? parentIssue.projectId ?? null,
+            issueId,
+            executionWorkspaceId: input.executionWorkspaceId ?? null,
+            runtimeServiceId: input.runtimeServiceId ?? null,
+            type: input.type,
+            provider: input.provider,
+            externalId: input.externalId ?? null,
+            title: input.title,
+            url: input.url ?? null,
+            status: input.status ?? "active",
+            reviewState: input.reviewState ?? "none",
+            isPrimary: input.isPrimary ?? false,
+            healthStatus: input.healthStatus ?? "unknown",
+            summary: input.summary ?? null,
+            metadata: input.metadata ?? null,
+            createdByRunId: input.createdByRunId ?? null,
+            createdAt: now,
+            updatedAt: now,
+          };
+          if (record.isPrimary) {
+            for (const [id, product] of issueWorkProducts.entries()) {
+              if (
+                product.companyId === record.companyId &&
+                product.issueId === record.issueId &&
+                product.type === record.type &&
+                product.isPrimary
+              ) {
+                issueWorkProducts.set(id, {
+                  ...product,
+                  isPrimary: false,
+                  updatedAt: now,
+                });
+              }
+            }
+          }
+          issueWorkProducts.set(record.id, record);
+          return record;
+        },
+        async update(workProductId, patch, companyId) {
+          requireCapability(manifest, capabilitySet, "issues.update");
+          const existing = issueWorkProducts.get(workProductId);
+          if (!isInCompany(existing, companyId)) {
+            throw new Error(`Work product not found: ${workProductId}`);
+          }
+          const now = new Date();
+          if (patch.isPrimary === true) {
+            for (const [id, product] of issueWorkProducts.entries()) {
+              if (
+                id !== workProductId &&
+                product.companyId === existing.companyId &&
+                product.issueId === existing.issueId &&
+                product.type === existing.type &&
+                product.isPrimary
+              ) {
+                issueWorkProducts.set(id, {
+                  ...product,
+                  isPrimary: false,
+                  updatedAt: now,
+                });
+              }
+            }
+          }
+          const updated: IssueWorkProduct = {
+            ...existing,
+            ...patch,
+            updatedAt: now,
+          };
+          issueWorkProducts.set(workProductId, updated);
+          return updated;
+        },
+        async delete(workProductId, companyId) {
+          requireCapability(manifest, capabilitySet, "issues.update");
+          const existing = issueWorkProducts.get(workProductId);
+          if (!isInCompany(existing, companyId)) {
+            throw new Error(`Work product not found: ${workProductId}`);
+          }
+          issueWorkProducts.delete(workProductId);
+          return existing;
+        },
+      },
       documents: {
         async list(issueId, companyId) {
           requireCapability(manifest, capabilitySet, "issue.documents.read");
@@ -660,6 +764,7 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         list.push(row);
         issueComments.set(row.issueId, list);
       }
+      for (const row of input.issueWorkProducts ?? []) issueWorkProducts.set(row.id, row);
       for (const row of input.agents ?? []) agents.set(row.id, row);
       for (const row of input.goals ?? []) goals.set(row.id, row);
     },
